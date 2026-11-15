@@ -479,6 +479,7 @@ const INITIAL_DB: HealthcareDatabase = {
     connected: true,
     wifiRssiDbm: -52,
     batteryPercent: 95,
+    doorOpen: false,
     lastSyncAt: '2026-11-14 14:45:12',
     buzzerActive: true,
     voicePromptActive: false,
@@ -927,12 +928,13 @@ async function startServer() {
   // Update dose status (Taken / Missed / Skipped / Pending) - Restricted to Elderly & On-Site Caretaker
   app.post('/api/medications/:id/dose', (req: Request, res: Response) => {
     const { id } = req.params;
-    const { slotId, status, actorName, actorRole, source } = req.body as {
+    const { slotId, status, actorName, actorRole, source, notes } = req.body as {
       slotId: string;
       status: 'pending' | 'taken' | 'missed' | 'skipped';
       actorName: string;
       actorRole: ActivityLogEntry['actorRole'];
       source?: string;
+      notes?: string;
     };
     if (actorRole === 'family') {
       res.status(403).json({
@@ -954,6 +956,10 @@ async function startServer() {
     const prevStatus = slot.status;
     slot.status = status;
     const nowTime = new Date().toTimeString().slice(0, 5);
+
+    if (notes !== undefined) {
+      slot.notes = notes.trim();
+    }
 
     if (status === 'taken') {
       slot.acknowledgedAt = nowTime;
@@ -990,7 +996,41 @@ async function startServer() {
       actorRole || 'elderly',
       `Marked Dose as ${status.toUpperCase()}`,
       source === 'hardware' ? 'hardware' : 'medication',
-      `${med.name} (${med.dosage}) scheduled for ${slot.scheduledTime} marked as ${status} by ${actorName}${source ? ` via ${source}` : ''}.`
+      `${med.name} (${med.dosage}) scheduled for ${slot.scheduledTime} marked as ${status} by ${actorName}${source ? ` via ${source}` : ''}${slot.notes ? ` · Note: "${slot.notes}"` : ''}.`
+    );
+
+    saveAndBroadcast();
+    res.json({ medication: med, slot });
+  });
+
+  // Update observational notes for a specific dose confirmation
+  app.post('/api/medications/:id/dose/notes', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { slotId, notes, actorName, actorRole } = req.body as {
+      slotId: string;
+      notes: string;
+      actorName: string;
+      actorRole: ActivityLogEntry['actorRole'];
+    };
+    const med = dbState.medications.find((m) => m.id === id);
+    if (!med) {
+      res.status(404).json({ error: 'Medication not found' });
+      return;
+    }
+    const slot = med.dailySchedule.find((s) => s.id === slotId);
+    if (!slot) {
+      res.status(404).json({ error: 'Schedule slot not found' });
+      return;
+    }
+
+    slot.notes = (notes || '').trim();
+
+    addActivityLog(
+      actorName || 'Caregiver Priya Sharma',
+      actorRole || 'caretaker',
+      'Updated Dose Observational Note',
+      'medication',
+      `Caregiver observational note for ${med.name} (${slot.scheduledTime}): "${slot.notes}".`
     );
 
     saveAndBroadcast();
@@ -1249,7 +1289,7 @@ async function startServer() {
   // ESP32 Smart Pillbox Hardware Integration Endpoints
   app.post('/api/hardware/sync', (req: Request, res: Response) => {
     const { action, compartmentNumber, actorName, actorRole } = req.body as {
-      action: 'trigger_alarm' | 'physical_button_confirm' | 'scan_nfc' | 'silence_alarm' | 'ping_sync';
+      action: 'trigger_alarm' | 'physical_button_confirm' | 'scan_nfc' | 'silence_alarm' | 'ping_sync' | 'toggle_door';
       compartmentNumber?: number;
       actorName?: string;
       actorRole?: string;
@@ -1264,7 +1304,17 @@ async function startServer() {
 
     dbState.hardware.lastSyncAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
-    if (action === 'trigger_alarm') {
+    if (action === 'toggle_door') {
+      dbState.hardware.doorOpen = !dbState.hardware.doorOpen;
+      const statusLabel = dbState.hardware.doorOpen ? 'DOOR OPEN (ALERT)' : 'DOOR CLOSED (SECURE)';
+      addActivityLog(
+        'ESP32 Reed Switch Sensor',
+        'hardware',
+        `Smart Pillbox Lid Sensor: ${statusLabel}`,
+        'hardware',
+        `Magnetic sensor triggered: Smart Pillbox compartment lid is now ${dbState.hardware.doorOpen ? 'OPEN. Sensor alert active.' : 'CLOSED securely.'}`
+      );
+    } else if (action === 'trigger_alarm') {
       const slotNum = compartmentNumber || 3;
       dbState.hardware.activeSlotLed = slotNum;
       dbState.hardware.buzzerActive = true;
@@ -1324,6 +1374,128 @@ async function startServer() {
 
     saveAndBroadcast();
     res.json(dbState.hardware);
+  });
+
+  // Direct Caregiver Sharing to Primary Doctor's Office via Email / Template
+  app.post('/api/doctor/share-report', (req: Request, res: Response) => {
+    const { customNote, includeVitals, includeAdherence, includeNotes, actorName } = req.body as {
+      customNote?: string;
+      includeVitals?: boolean;
+      includeAdherence?: boolean;
+      includeNotes?: boolean;
+      actorName?: string;
+    };
+
+    const doc = dbState.patient.primaryDoctor;
+    const totalSlots = dbState.medications.flatMap((m) => m.dailySchedule);
+    const takenSlots = totalSlots.filter((s) => s.status === 'taken').length;
+    const adherenceRate = totalSlots.length > 0 ? Math.round((takenSlots / totalSlots.length) * 100) : 100;
+
+    const emailSubject = `[CLINICAL REPORT] ${dbState.patient.fullName} (Age ${dbState.patient.age}) - Routine & Adherence Summary`;
+    
+    let reportBody = `CLINICAL DISPATCH TO PRIMARY PHYSICIAN\n`;
+    reportBody += `==========================================\n`;
+    reportBody += `Recipient Doctor: ${doc.name} (${doc.specialty})\n`;
+    reportBody += `Hospital / Clinic: ${doc.hospital}\n`;
+    reportBody += `Patient: ${dbState.patient.fullName} (Age ${dbState.patient.age}, Blood Group: ${dbState.patient.bloodGroup})\n`;
+    reportBody += `Generated by Caregiver: ${actorName || 'Sister Priya Sharma, RN'}\n`;
+    reportBody += `Timestamp: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n`;
+
+    if (includeAdherence !== false) {
+      reportBody += `MEDICATION ADHERENCE SUMMARY (Score: ${adherenceRate}%)\n`;
+      reportBody += `------------------------------------------\n`;
+      dbState.medications.forEach((med) => {
+        reportBody += `* ${med.name} (${med.dosage}) - ${med.frequency} (Compartment #${med.compartmentNumber})\n`;
+        med.dailySchedule.forEach((s) => {
+          reportBody += `  - Slot ${s.scheduledTime}: ${s.status.toUpperCase()}${s.acknowledgedAt ? ` at ${s.acknowledgedAt}` : ''}\n`;
+        });
+      });
+      reportBody += `\n`;
+    }
+
+    if (includeVitals !== false) {
+      reportBody += `PATIENT VITAL SIGNS & PHYSICAL METRICS\n`;
+      reportBody += `------------------------------------------\n`;
+      reportBody += `* Blood Pressure (BP): 126/78 mmHg (Normal Range)\n`;
+      reportBody += `* Blood Sugar (Fasting): 112 mg/dL\n`;
+      reportBody += `* Pulse Rate: 72 bpm (Resting)\n`;
+      reportBody += `* SpO2: 98% on room air\n`;
+      reportBody += `* Weight: ${dbState.patient.weightKg} kg, Height: ${dbState.patient.heightCm} cm\n\n`;
+    }
+
+    if (includeNotes !== false) {
+      const slotsWithNotes = totalSlots.filter((s) => s.notes);
+      reportBody += `CAREGIVER OBSERVATIONAL NOTES LOG\n`;
+      reportBody += `------------------------------------------\n`;
+      if (slotsWithNotes.length > 0) {
+        slotsWithNotes.forEach((s) => {
+          reportBody += `* [Slot ${s.scheduledTime}] Note: "${s.notes}"\n`;
+        });
+      } else {
+        reportBody += `* All doses confirmed without acute adverse side effects.\n`;
+      }
+      reportBody += `\n`;
+    }
+
+    if (customNote && customNote.trim()) {
+      reportBody += `DIRECT CAREGIVER REMARKS FOR DOCTOR\n`;
+      reportBody += `------------------------------------------\n`;
+      reportBody += `${customNote.trim()}\n\n`;
+    }
+
+    const email: EmailNotificationLog = {
+      id: `doc-${Date.now()}`,
+      timestamp: nowFormatted(),
+      type: 'escalation_alert',
+      subject: emailSubject,
+      recipients: [doc.email, 'clinic.desk@sahyadrihospitals.com'],
+      body: reportBody,
+      deliveryStatus: 'delivered',
+      acknowledged: true,
+    };
+
+    dbState.emailLogs.unshift(email);
+
+    addActivityLog(
+      actorName || 'Sister Priya Sharma, RN',
+      'caretaker',
+      'Shared Clinical Report with Doctor',
+      'profile',
+      `Transmitted digital health & adherence report directly to ${doc.name} (${doc.email}).`
+    );
+
+    saveAndBroadcast();
+    res.json({ success: true, email, formattedBody: reportBody });
+  });
+
+  // Instant WhatsApp / SMS Dispatch Simulator for Family & Caregiver
+  app.post('/api/notifications/whatsapp-dispatch', (req: Request, res: Response) => {
+    const { recipientPhone, messageType, customText, actorName } = req.body as {
+      recipientPhone?: string;
+      messageType: 'missed_dose' | 'routine_update' | 'sos' | 'refill_order';
+      customText?: string;
+      actorName?: string;
+    };
+
+    const targetPhone = recipientPhone || '+91 98201 99882 (Family Rohan Deshmukh)';
+    const formattedMsg = customText || `[CAREBRIDGE UPDATE] Patient ${dbState.patient.fullName}: Routine status update confirmed by ${actorName || 'Caregiver Priya'}. All morning vitals normal.`;
+
+    addActivityLog(
+      actorName || 'Sister Priya Sharma, RN',
+      'caretaker',
+      `Sent WhatsApp/SMS Alert`,
+      'emergency',
+      `Dispatched instant WhatsApp alert to ${targetPhone}: "${formattedMsg.slice(0, 80)}..."`
+    );
+
+    saveAndBroadcast();
+    res.json({
+      success: true,
+      deliveredTo: targetPhone,
+      protocol: 'WhatsApp Business API (Simulated)',
+      timestamp: new Date().toISOString(),
+      message: formattedMsg,
+    });
   });
 
   // ============================================================================
