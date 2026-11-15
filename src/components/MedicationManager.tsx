@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Plus,
   CheckCircle2,
@@ -15,6 +16,7 @@ import {
   Eye,
   X,
   Clock,
+  FileText,
 } from 'lucide-react';
 import type {
   Medication,
@@ -37,8 +39,15 @@ interface MedicationManagerProps {
   onDoseAction: (
     medId: string,
     slotId: string,
-    status: 'pending' | 'taken' | 'missed' | 'skipped'
+    status: 'pending' | 'taken' | 'missed' | 'skipped',
+    notes?: string
   ) => Promise<void>;
+  onUpdateDoseNotes?: (
+    medId: string,
+    slotId: string,
+    notes: string
+  ) => Promise<void>;
+  recentlyConfirmedSlotId?: string | null;
   onAddMedication: (med: Partial<Medication>) => Promise<void>;
   onUpdateMedication: (medId: string, updates: Partial<Medication>) => Promise<void>;
   onDeleteMedication: (medId: string) => Promise<void>;
@@ -242,6 +251,8 @@ export const MedicationManager: React.FC<MedicationManagerProps> = ({
   members,
   currentMember,
   onDoseAction,
+  onUpdateDoseNotes,
+  recentlyConfirmedSlotId,
   onAddMedication,
   onUpdateMedication,
   onDeleteMedication,
@@ -251,6 +262,39 @@ export const MedicationManager: React.FC<MedicationManagerProps> = ({
   const [filter, setFilter] = useState<'all' | 'low_stock' | 'missed'>('all');
   const [showAddForm, setShowAddForm] = useState<boolean>(false);
   const [editingMedId, setEditingMedId] = useState<string | null>(null);
+
+  // Dose Confirmation Feedback Animation & Notes
+  const [localConfirmedSlotId, setLocalConfirmedSlotId] = useState<string | null>(null);
+  const [editingNoteSlotId, setEditingNoteSlotId] = useState<string | null>(null);
+  const [tempNoteText, setTempNoteText] = useState<string>('');
+
+  const activeConfirmedSlotId = recentlyConfirmedSlotId || localConfirmedSlotId;
+
+  const handleConfirmDoseWithAnimation = async (medId: string, slotId: string) => {
+    setLocalConfirmedSlotId(slotId);
+    setTimeout(() => {
+      setLocalConfirmedSlotId((prev) => (prev === slotId ? null : prev));
+    }, 2600);
+    await onDoseAction(medId, slotId, 'taken');
+  };
+
+  const handleSaveNote = async (medId: string, slotId: string, noteText: string) => {
+    if (onUpdateDoseNotes) {
+      await onUpdateDoseNotes(medId, slotId, noteText);
+    } else {
+      await fetch(`/api/medications/${medId}/dose/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slotId,
+          notes: noteText,
+          actorName: currentMember.name,
+          actorRole: currentMember.role,
+        }),
+      });
+    }
+    setEditingNoteSlotId(null);
+  };
 
   // Form states (Indian clinical defaults)
   const [name, setName] = useState('');
@@ -1000,53 +1044,185 @@ export const MedicationManager: React.FC<MedicationManagerProps> = ({
             return (
               <div
                 key={slot.id}
-                className={`flex items-center justify-between gap-3 rounded-xl border p-3 ${
+                className={`relative overflow-hidden flex flex-col justify-between gap-2.5 rounded-xl border p-3.5 transition-all duration-300 ${
                   isMissed
                     ? 'border-red-300 bg-red-50/40 dark:border-red-900/60 dark:bg-red-950/20'
                     : isTaken
-                    ? 'border-emerald-200 bg-emerald-50/30 dark:border-emerald-900/40 dark:bg-emerald-950/10'
+                    ? 'border-emerald-300 bg-emerald-50/30 dark:border-emerald-900/40 dark:bg-emerald-950/15'
                     : 'border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-800/40'
                 }`}
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  {/* Small Thumbnail Preview of the Medicine */}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setEnlargedPhotoMed({
-                        medName: med.name,
-                        dosage: med.dosage,
-                        compartmentNumber: med.compartmentNumber,
-                        instructions: med.instructions,
-                        imageUrl: thumbnailUrl,
-                      })
-                    }
-                    className="group relative h-14 w-20 shrink-0 overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xs dark:border-slate-700"
-                    title="Tap to enlarge medicine strip/bottle photo"
-                  >
-                    <img
-                      src={thumbnailUrl}
-                      alt={`${med.name} thumbnail`}
-                      className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                    />
-                    <span className="absolute inset-0 flex items-center justify-center bg-slate-900/40 opacity-0 transition-opacity group-hover:opacity-100">
-                      <Eye className="h-4 w-4 text-white" />
-                    </span>
-                  </button>
+                {/* Subtle Green Checkmark Animation Overlay on Dose Confirmation */}
+                <AnimatePresence>
+                  {activeConfirmedSlotId === slot.id && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.25 }}
+                      className="absolute inset-0 z-30 flex flex-col items-center justify-center rounded-xl bg-emerald-600/95 text-white backdrop-blur-xs shadow-lg"
+                    >
+                      <motion.div
+                        initial={{ scale: 0.2, rotate: -25 }}
+                        animate={{ scale: [0.2, 1.25, 1], rotate: 0 }}
+                        transition={{ duration: 0.4, ease: 'easeOut' }}
+                        className="flex items-center justify-center rounded-full bg-white p-2 text-emerald-600 shadow-xl ring-4 ring-emerald-300/50"
+                      >
+                        <CheckCircle2 className="h-8 w-8 stroke-[2.5]" />
+                      </motion.div>
+                      <motion.span
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.15, duration: 0.25 }}
+                        className="mt-1.5 text-xs font-extrabold tracking-wide uppercase drop-shadow-sm text-white"
+                      >
+                        Dose Confirmed Taken!
+                      </motion.span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-teal-800 dark:text-teal-300 tabular-nums">
-                      <span>{slot.scheduledTime}</span>
-                      <span>·</span>
-                      <span>Box #{med.compartmentNumber}</span>
-                    </div>
-                    <div className="truncate text-sm font-bold text-slate-900 dark:text-white">
-                      {med.name}
-                    </div>
-                    <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">
-                      {med.dosage} · {slot.status.toUpperCase()}
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {/* Small Thumbnail Preview of the Medicine */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEnlargedPhotoMed({
+                          medName: med.name,
+                          dosage: med.dosage,
+                          compartmentNumber: med.compartmentNumber,
+                          instructions: med.instructions,
+                          imageUrl: thumbnailUrl,
+                        })
+                      }
+                      className="group relative h-14 w-20 shrink-0 overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xs dark:border-slate-700"
+                      title="Tap to enlarge medicine strip/bottle photo"
+                    >
+                      <img
+                        src={thumbnailUrl}
+                        alt={`${med.name} thumbnail`}
+                        className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                      />
+                      <span className="absolute inset-0 flex items-center justify-center bg-slate-900/40 opacity-0 transition-opacity group-hover:opacity-100">
+                        <Eye className="h-4 w-4 text-white" />
+                      </span>
+                    </button>
+
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-teal-800 dark:text-teal-300 tabular-nums">
+                        <span>{slot.scheduledTime}</span>
+                        <span>·</span>
+                        <span>Box #{med.compartmentNumber}</span>
+                      </div>
+                      <div className="truncate text-sm font-bold text-slate-900 dark:text-white">
+                        {med.name}
+                      </div>
+                      <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">
+                        {med.dosage} · <span className={isTaken ? 'font-bold text-emerald-700 dark:text-emerald-400' : ''}>{slot.status.toUpperCase()}</span>
+                      </div>
                     </div>
                   </div>
+
+                  {canConfirmPhysicalDose && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {!isTaken ? (
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmDoseWithAnimation(med.id, slot.id)}
+                          className="flex items-center gap-1 rounded-lg bg-emerald-700 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-800 shadow-sm active:scale-95 transition-transform"
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          <span>Confirm</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onDoseAction(med.id, slot.id, 'pending')}
+                          className="flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                        >
+                          <CheckCircle2 className="h-3 w-3" />
+                          <span>Taken</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Caregiver Observational Notes Field */}
+                <div className="border-t border-slate-100 pt-2 dark:border-slate-800 text-xs">
+                  <div className="flex items-center justify-between gap-1.5">
+                    <div className="flex items-center gap-1 min-w-0">
+                      <FileText className="h-3 w-3 text-teal-700 dark:text-teal-400 shrink-0" />
+                      <span className="font-semibold text-slate-700 dark:text-slate-300 text-[11px]">Note:</span>
+                      {slot.notes ? (
+                        <span className="truncate italic font-medium text-slate-900 dark:text-slate-100 text-[11px]">
+                          &ldquo;{slot.notes}&rdquo;
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 italic text-[10px]">None recorded</span>
+                      )}
+                    </div>
+
+                    {canConfirmPhysicalDose && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (editingNoteSlotId === slot.id) {
+                            setEditingNoteSlotId(null);
+                          } else {
+                            setEditingNoteSlotId(slot.id);
+                            setTempNoteText(slot.notes || '');
+                          }
+                        }}
+                        className="text-[11px] font-semibold text-teal-800 hover:underline dark:text-teal-300 shrink-0"
+                      >
+                        {slot.notes ? 'Edit' : '+ Note'}
+                      </button>
+                    )}
+                  </div>
+
+                  {editingNoteSlotId === slot.id && (
+                    <div className="mt-2 rounded-lg bg-teal-50/70 p-2.5 border border-teal-200 dark:bg-slate-800/90 dark:border-teal-800 space-y-1.5">
+                      <input
+                        type="text"
+                        value={tempNoteText}
+                        onChange={(e) => setTempNoteText(e.target.value)}
+                        placeholder="Observational notes (e.g. taken with water, BP 120/80)..."
+                        className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                      />
+                      <div className="flex flex-wrap items-center justify-between gap-1">
+                        <div className="flex flex-wrap gap-1">
+                          {['With water', 'BP normal', 'Post-meal'].map((tag) => (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() => setTempNoteText((prev) => (prev ? `${prev}, ${tag}` : tag))}
+                              className="rounded bg-white px-1.5 py-0.5 text-[9px] border border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700"
+                            >
+                              +{tag}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setEditingNoteSlotId(null)}
+                            className="px-2 py-0.5 text-[10px] text-slate-600 hover:text-slate-900 dark:text-slate-400"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveNote(med.id, slot.id, tempNoteText)}
+                            className="rounded bg-teal-700 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-teal-800"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -1238,79 +1414,193 @@ export const MedicationManager: React.FC<MedicationManagerProps> = ({
                   {med.dailySchedule.map((slot) => (
                     <div
                       key={slot.id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-800/50"
+                      className={`relative overflow-hidden flex flex-col justify-between gap-2 rounded-lg border p-3 transition-all duration-300 ${
+                        slot.status === 'taken'
+                          ? 'border-emerald-300 bg-emerald-50/30 dark:border-emerald-900/40 dark:bg-emerald-950/20'
+                          : slot.status === 'missed'
+                          ? 'border-red-300 bg-red-50/40 dark:border-red-900/60 dark:bg-red-950/20'
+                          : 'border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/50'
+                      }`}
                     >
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={visualPhotoUrl}
-                          alt={`${med.name} strip thumbnail`}
-                          onClick={() =>
-                            setEnlargedPhotoMed({
-                              medName: med.name,
-                              dosage: med.dosage,
-                              compartmentNumber: med.compartmentNumber,
-                              instructions: med.instructions,
-                              imageUrl: visualPhotoUrl,
-                            })
-                          }
-                          className="h-9 w-12 shrink-0 cursor-pointer rounded border border-slate-300 object-cover dark:border-slate-700"
-                          title="Tap to enlarge visual ID"
-                        />
-                        <span className="font-mono text-sm font-bold text-slate-900 dark:text-slate-100 tabular-nums">
-                          {slot.scheduledTime}
-                        </span>
-                        <div>
-                          <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                            {slot.label}
-                          </div>
-                          <div className="text-[11px] text-slate-500">
-                            {slot.status === 'taken'
-                              ? `Confirmed at ${slot.acknowledgedAt} by ${slot.acknowledgedBy}`
-                              : slot.status === 'missed'
-                              ? 'Missed · Escalated to Caretaker & Family'
-                              : slot.status === 'skipped'
-                              ? 'Dose Skipped'
-                              : 'Awaiting Confirmation'}
+                      {/* Subtle Green Checkmark Animation Overlay on Dose Confirmation */}
+                      <AnimatePresence>
+                        {activeConfirmedSlotId === slot.id && (
+                          <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.25 }}
+                            className="absolute inset-0 z-30 flex flex-col items-center justify-center rounded-lg bg-emerald-600/95 text-white backdrop-blur-xs shadow-lg"
+                          >
+                            <motion.div
+                              initial={{ scale: 0.2, rotate: -25 }}
+                              animate={{ scale: [0.2, 1.25, 1], rotate: 0 }}
+                              transition={{ duration: 0.4, ease: 'easeOut' }}
+                              className="flex items-center justify-center rounded-full bg-white p-2 text-emerald-600 shadow-xl ring-4 ring-emerald-300/50"
+                            >
+                              <CheckCircle2 className="h-7 w-7 stroke-[2.5]" />
+                            </motion.div>
+                            <motion.span
+                              initial={{ opacity: 0, y: 5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: 0.15, duration: 0.25 }}
+                              className="mt-1 text-xs font-extrabold tracking-wide uppercase drop-shadow-sm text-white"
+                            >
+                              Dose Confirmed Taken!
+                            </motion.span>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={visualPhotoUrl}
+                            alt={`${med.name} strip thumbnail`}
+                            onClick={() =>
+                              setEnlargedPhotoMed({
+                                medName: med.name,
+                                dosage: med.dosage,
+                                compartmentNumber: med.compartmentNumber,
+                                instructions: med.instructions,
+                                imageUrl: visualPhotoUrl,
+                              })
+                            }
+                            className="h-9 w-12 shrink-0 cursor-pointer rounded border border-slate-300 object-cover dark:border-slate-700"
+                            title="Tap to enlarge visual ID"
+                          />
+                          <span className="font-mono text-sm font-bold text-slate-900 dark:text-slate-100 tabular-nums">
+                            {slot.scheduledTime}
+                          </span>
+                          <div>
+                            <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                              {slot.label}
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              {slot.status === 'taken'
+                                ? `Confirmed at ${slot.acknowledgedAt} by ${slot.acknowledgedBy}`
+                                : slot.status === 'missed'
+                                ? 'Missed · Escalated to Caretaker & Family'
+                                : slot.status === 'skipped'
+                                ? 'Dose Skipped'
+                                : 'Awaiting Confirmation'}
+                            </div>
                           </div>
                         </div>
+
+                        {canConfirmPhysicalDose ? (
+                          <div className="flex items-center gap-1.5">
+                            {slot.status !== 'taken' ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleConfirmDoseWithAnimation(med.id, slot.id)}
+                                  className="flex items-center gap-1 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 whitespace-nowrap shrink-0 shadow-sm active:scale-95 transition-transform"
+                                >
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  <span>Confirm Taken</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onDoseAction(med.id, slot.id, 'skipped')}
+                                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 whitespace-nowrap shrink-0"
+                                >
+                                  Skip
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => onDoseAction(med.id, slot.id, 'pending')}
+                                className="flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline dark:text-emerald-400 whitespace-nowrap shrink-0"
+                              >
+                                <CheckCircle2 className="h-4 w-4" />
+                                <span>Taken · Undo</span>
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="font-mono text-xs font-semibold uppercase text-slate-500">
+                            Status: {slot.status} (View-Only)
+                          </span>
+                        )}
                       </div>
 
-                      {canConfirmPhysicalDose ? (
-                        <div className="flex items-center gap-1.5">
-                          {slot.status !== 'taken' ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => onDoseAction(med.id, slot.id, 'taken')}
-                                className="flex items-center gap-1 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 whitespace-nowrap shrink-0"
-                              >
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                                <span>Confirm Taken</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => onDoseAction(med.id, slot.id, 'skipped')}
-                                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 whitespace-nowrap shrink-0"
-                              >
-                                Skip
-                              </button>
-                            </>
-                          ) : (
+                      {/* Caregiver Observational Notes on Dose Slot */}
+                      <div className="border-t border-slate-200/60 pt-2 dark:border-slate-700/60">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 text-xs">
+                            <FileText className="h-3.5 w-3.5 text-teal-700 dark:text-teal-400 shrink-0" />
+                            <span className="font-semibold text-slate-700 dark:text-slate-300 text-[11px]">Caregiver Note:</span>
+                            {slot.notes ? (
+                              <span className="font-medium italic text-slate-900 dark:text-slate-100 text-[11px]">
+                                &ldquo;{slot.notes}&rdquo;
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 italic text-[10px]">No observational note recorded</span>
+                            )}
+                          </div>
+
+                          {canConfirmPhysicalDose && (
                             <button
                               type="button"
-                              onClick={() => onDoseAction(med.id, slot.id, 'pending')}
-                              className="flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline dark:text-emerald-400 whitespace-nowrap shrink-0"
+                              onClick={() => {
+                                if (editingNoteSlotId === slot.id) {
+                                  setEditingNoteSlotId(null);
+                                } else {
+                                  setEditingNoteSlotId(slot.id);
+                                  setTempNoteText(slot.notes || '');
+                                }
+                              }}
+                              className="text-[11px] font-semibold text-teal-800 hover:underline dark:text-teal-300 shrink-0"
                             >
-                              <CheckCircle2 className="h-4 w-4" />
-                              <span>Taken · Undo</span>
+                              {slot.notes ? 'Edit' : '+ Add Note'}
                             </button>
                           )}
                         </div>
-                      ) : (
-                        <span className="font-mono text-xs font-semibold uppercase text-slate-500">
-                          Status: {slot.status} (View-Only)
-                        </span>
-                      )}
+
+                        {editingNoteSlotId === slot.id && (
+                          <div className="mt-2 rounded-lg bg-teal-50/70 p-2.5 border border-teal-200 dark:bg-slate-800/90 dark:border-teal-800 space-y-1.5">
+                            <input
+                              type="text"
+                              value={tempNoteText}
+                              onChange={(e) => setTempNoteText(e.target.value)}
+                              placeholder="Observational notes (e.g. taken with water, BP 120/80)..."
+                              className="w-full rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                            />
+                            <div className="flex flex-wrap items-center justify-between gap-1">
+                              <div className="flex flex-wrap gap-1">
+                                {['With water', 'BP normal', 'Post-meal', 'Resting'].map((tag) => (
+                                  <button
+                                    key={tag}
+                                    type="button"
+                                    onClick={() => setTempNoteText((prev) => (prev ? `${prev}, ${tag}` : tag))}
+                                    className="rounded bg-white px-1.5 py-0.5 text-[9px] border border-slate-200 text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700"
+                                  >
+                                    +{tag}
+                                  </button>
+                                ))}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingNoteSlotId(null)}
+                                  className="px-2 py-0.5 text-[10px] text-slate-600 hover:text-slate-900 dark:text-slate-400"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveNote(med.id, slot.id, tempNoteText)}
+                                  className="rounded bg-teal-700 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-teal-800"
+                                >
+                                  Save Note
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
