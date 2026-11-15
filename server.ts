@@ -612,6 +612,189 @@ async function startServer() {
   });
 
   // Profile selection authentication: No PIN for Patient or Family; PIN required only for Caregiver
+  app.post('/api/auth/verify-passcode', (req: Request, res: Response) => {
+    const { memberId, passcode } = req.body as { memberId: string; passcode?: string };
+    const member = dbState.members.find((m) => m.id === memberId);
+    if (!member) {
+      res.status(404).json({ error: 'Member profile not found.' });
+      return;
+    }
+    if (member.status === 'revoked' || !member.consentGrantedByPatient) {
+      res.status(403).json({
+        error: 'Access revoked by Smt. Kamala Deshmukh. Elderly patient retains full consent authority.',
+      });
+      return;
+    }
+
+    // PIN is strictly required ONLY for Caregiver (caretaker role)
+    if (member.role === 'caretaker' && member.passcode !== String(passcode || '').trim()) {
+      addActivityLog(
+        member.name,
+        member.role,
+        'Failed Caregiver PIN Attempt',
+        'security',
+        `Invalid PIN entered for Caregiver ${member.name}.`
+      );
+      saveAndBroadcast();
+      res.status(401).json({ error: 'Invalid 4-digit Caregiver security PIN.' });
+      return;
+    }
+
+    member.lastActiveAt = nowFormatted();
+    addActivityLog(
+      member.name,
+      member.role,
+      member.role === 'caretaker'
+        ? 'Caregiver Unlocked via PIN'
+        : 'Selected Profile Session',
+      'security',
+      `${member.name} entered OJAS as ${member.role.toUpperCase()}.`
+    );
+    saveAndBroadcast();
+    res.json({ success: true, member });
+  });
+
+  // Update patient clinical profile (Restricted: Elderly cannot modify clinical parameters; Family/Caretaker require patient consent + canEdit)
+  app.put('/api/patient', (req: Request, res: Response) => {
+    const { actorName, actorRole, updates } = req.body;
+    const actor = dbState.members.find((m) => m.role === actorRole);
+    if (actorRole === 'elderly') {
+      res.status(403).json({
+        error: 'Elderly patient view cannot modify clinical diagnostic parameters directly.',
+      });
+      return;
+    }
+    if (!actor || !actor.consentGrantedByPatient || !actor.permissions.canEdit) {
+      res.status(403).json({
+        error: 'Read-only access: Patient authorization (canEdit) is required to modify clinical profile parameters.',
+      });
+      return;
+    }
+    dbState.patient = {
+      ...dbState.patient,
+      ...updates,
+    };
+    addActivityLog(
+      actorName || 'Sister Priya Nair, RN',
+      actorRole || 'caretaker',
+      'Updated Patient Healthcare Profile',
+      'profile',
+      'Updated clinical profile, allergies, conditions, or emergency contacts.'
+    );
+    saveAndBroadcast();
+    res.json(dbState.patient);
+  });
+
+  // Upload medical prescription or report
+  app.post('/api/patient/reports', (req: Request, res: Response) => {
+    const { actorName, actorRole, report } = req.body as {
+      actorName: string;
+      actorRole: ActivityLogEntry['actorRole'];
+      report: Omit<MedicalReport, 'id' | 'uploadedAt'>;
+    };
+    const actor = dbState.members.find((m) => m.role === actorRole);
+    if (actorRole === 'elderly' || !actor?.consentGrantedByPatient || !actor?.permissions.canAdd) {
+      res.status(403).json({
+        error: 'Authorized Caregiver permission (canAdd) is required to upload clinical reports.',
+      });
+      return;
+    }
+    const newReport: MedicalReport = {
+      ...report,
+      id: `rep-${Date.now()}`,
+      uploadedAt: nowFormatted(),
+    };
+    dbState.patient.reports.unshift(newReport);
+    addActivityLog(
+      actorName || 'Sister Priya Nair, RN',
+      actorRole || 'caretaker',
+      `Uploaded ${newReport.category}`,
+      'profile',
+      `Added medical document "${newReport.title}" (${newReport.doctorName}).`
+    );
+    saveAndBroadcast();
+    res.json(newReport);
+  });
+
+  // Invite or update authorized family member / caretaker (STRICTLY ELDERLY PATIENT ONLY)
+  app.post('/api/members', (req: Request, res: Response) => {
+    const { actorName, actorRole, member } = req.body as {
+      actorName: string;
+      actorRole: ActivityLogEntry['actorRole'];
+      member: Partial<AuthorizedMember>;
+    };
+    if (actorRole !== 'elderly') {
+      res.status(403).json({
+        error: 'Only Smt. Kamala Deshmukh (Elderly Patient) has consent authority to invite or authorize members.',
+      });
+      return;
+    }
+    const newMember: AuthorizedMember = {
+      id: `mem-${Date.now()}`,
+      name: member.name || 'New Care Member',
+      role: member.role || 'family',
+      relationship: member.relationship || 'Family Member',
+      email: member.email || 'family@ojas.in',
+      phone: member.phone || '+91 98200 00000',
+      passcode: member.passcode || '4321',
+      avatarUrl:
+        member.avatarUrl ||
+        (member.role === 'caretaker'
+          ? '/src/assets/images/avatar_caretaker_priya_1794718340849.jpg'
+          : '/src/assets/images/avatar_family_rohan_1794718340820.jpg'),
+      status: 'active',
+      consentGrantedByPatient: true,
+      permissions: member.permissions || {
+        canView: true,
+        canAdd: member.role === 'caretaker',
+        canEdit: member.role === 'caretaker',
+        canDelete: false,
+        canManageAccess: false,
+      },
+      lastActiveAt: nowFormatted(),
+    };
+    dbState.members.push(newMember);
+    if (newMember.email && !dbState.notificationSettings.recipientEmails.includes(newMember.email)) {
+      dbState.notificationSettings.recipientEmails.push(newMember.email);
+    }
+    addActivityLog(
+      actorName || 'Smt. Kamala Deshmukh',
+      'elderly',
+      'Authorized New Care Circle Member',
+      'security',
+      `Granted ${newMember.role} access to ${newMember.name} (${newMember.relationship}).`
+    );
+    saveAndBroadcast();
+    res.json(newMember);
+  });
+
+  app.put('/api/members/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { actorName, actorRole, updates } = req.body;
+    if (actorRole !== 'elderly') {
+      res.status(403).json({
+        error: 'Only Smt. Kamala Deshmukh (Elderly Patient) can modify role permissions or revoke consent.',
+      });
+      return;
+    }
+    const idx = dbState.members.findIndex((m) => m.id === id);
+    if (idx === -1) {
+      res.status(404).json({ error: 'Member not found' });
+      return;
+    }
+    dbState.members[idx] = { ...dbState.members[idx], ...updates };
+    addActivityLog(
+      actorName || 'Smt. Kamala Deshmukh',
+      'elderly',
+      'Updated Member Access & Consent',
+      'security',
+      `Modified access status/permissions for ${dbState.members[idx].name} (Status: ${dbState.members[idx].status}).`
+    );
+    saveAndBroadcast();
+    res.json(dbState.members[idx]);
+  });
+
+  // Medication CRUD + Dose Tracking (Elderly cannot modify clinical medication schedules; Family/Caretaker require patient consent + permissions)
   // Vite middleware for development or static serving for production
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
