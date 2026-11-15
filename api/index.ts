@@ -1,9 +1,23 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { INITIAL_DB } from '../src/initialData';
-import type { HealthcareDatabase } from '../src/types';
+import fs from 'fs';
 
-// In-memory state for serverless execution
-let memoryDb: HealthcareDatabase = structuredClone(INITIAL_DB);
+// Load initial database seed cleanly from local data.json
+let memoryDb: any;
+try {
+  const dataPath = new URL('./data.json', import.meta.url);
+  memoryDb = JSON.parse(fs.readFileSync(dataPath, 'utf-8'));
+} catch (err) {
+  memoryDb = {
+    patient: {},
+    medications: [],
+    members: [],
+    appointments: [],
+    activityLogs: [],
+    emailLogs: [],
+    hardware: {},
+    notificationSettings: {},
+  };
+}
 
 async function parseBody(req: IncomingMessage): Promise<any> {
   return new Promise((resolve) => {
@@ -43,7 +57,6 @@ export default async function handler(req: any, res: any) {
   // Extract path from url (strip query params and normalize)
   const fullUrl = req.url || '';
   const pathname = fullUrl.split('?')[0].replace(/\/$/, '') || '/';
-  // If the path was rewritten or has /api prefix, handle both
   const path = pathname.startsWith('/api') ? pathname : `/api${pathname}`;
   const method = req.method?.toUpperCase() || 'GET';
 
@@ -58,7 +71,7 @@ export default async function handler(req: any, res: any) {
   // Route 2: POST /api/auth/verify-passcode
   if (method === 'POST' && path === '/api/auth/verify-passcode') {
     const { memberId, passcode } = body;
-    const member = memoryDb.members.find((m) => m.id === memberId);
+    const member = memoryDb.members?.find((m: any) => m.id === memberId);
     if (!member) {
       return sendJson(res, 404, { error: 'Care Circle member not found' });
     }
@@ -76,10 +89,10 @@ export default async function handler(req: any, res: any) {
     const parts = path.split('/');
     const id = parts[3];
     const { slotId, status, actorName, notes } = body;
-    const med = memoryDb.medications.find((m) => m.id === id);
+    const med = memoryDb.medications?.find((m: any) => m.id === id);
     if (!med) return sendJson(res, 404, { error: 'Medication not found' });
 
-    const slot = med.dailySchedule.find((s) => s.id === slotId);
+    const slot = med.dailySchedule?.find((s: any) => s.id === slotId);
     if (slot) {
       slot.status = status;
       if (status === 'taken') {
@@ -98,10 +111,10 @@ export default async function handler(req: any, res: any) {
     const parts = path.split('/');
     const id = parts[3];
     const { slotId, notes } = body;
-    const med = memoryDb.medications.find((m) => m.id === id);
+    const med = memoryDb.medications?.find((m: any) => m.id === id);
     if (!med) return sendJson(res, 404, { error: 'Medication not found' });
 
-    const slot = med.dailySchedule.find((s) => s.id === slotId);
+    const slot = med.dailySchedule?.find((s: any) => s.id === slotId);
     if (slot) {
       slot.notes = notes;
     }
@@ -113,7 +126,7 @@ export default async function handler(req: any, res: any) {
     const parts = path.split('/');
     const id = parts[3];
     const { addedQuantity } = body;
-    const med = memoryDb.medications.find((m) => m.id === id);
+    const med = memoryDb.medications?.find((m: any) => m.id === id);
     if (med) {
       med.stockCount = (med.stockCount || 0) + (Number(addedQuantity) || 30);
     }
@@ -124,6 +137,7 @@ export default async function handler(req: any, res: any) {
   if (method === 'POST' && path === '/api/medications') {
     const { medication } = body;
     if (medication) {
+      memoryDb.medications = memoryDb.medications || [];
       memoryDb.medications.push(medication);
     }
     return sendJson(res, 200, { success: true, memoryDb });
@@ -134,7 +148,7 @@ export default async function handler(req: any, res: any) {
     const parts = path.split('/');
     const id = parts[3];
     const { updates } = body;
-    const med = memoryDb.medications.find((m) => m.id === id);
+    const med = memoryDb.medications?.find((m: any) => m.id === id);
     if (med && updates) {
       Object.assign(med, updates);
     }
@@ -145,13 +159,14 @@ export default async function handler(req: any, res: any) {
   if (method === 'DELETE' && path.match(/^\/api\/medications\/[^/]+$/)) {
     const parts = path.split('/');
     const id = parts[3];
-    memoryDb.medications = memoryDb.medications.filter((m) => m.id !== id);
+    memoryDb.medications = memoryDb.medications?.filter((m: any) => m.id !== id);
     return sendJson(res, 200, { success: true, memoryDb });
   }
 
   // Route 9: POST /api/hardware/sync
   if (method === 'POST' && path === '/api/hardware/sync') {
     const { action, compartmentNumber } = body;
+    memoryDb.hardware = memoryDb.hardware || {};
     if (action === 'toggle_door') {
       memoryDb.hardware.doorOpen = !memoryDb.hardware.doorOpen;
     } else if (action === 'dismiss_buzzer' || action === 'silence_alarm') {
