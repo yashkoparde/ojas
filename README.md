@@ -355,7 +355,7 @@ erDiagram
 
 5. **Execute Verification Checks**:
    ```bash
-   # Run automated test suite (17 clinical, RBAC, i18n, and API tests)
+   # Run automated test suite (75 tests across clinical adherence, RBAC, vitals, IoT telemetry, i18n, emergency & serverless API)
    npm test
 
    # Verify TypeScript strict type compilation

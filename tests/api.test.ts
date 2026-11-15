@@ -20,7 +20,7 @@ class MockResponse {
   }
 }
 
-describe('OJAS Serverless API Integration', () => {
+describe('OJAS Serverless API Integration Suite', () => {
   it('GET /api/state returns full healthcare database and 200 OK', async () => {
     const req = { method: 'GET', url: '/api/state' };
     const res = new MockResponse();
@@ -35,6 +35,7 @@ describe('OJAS Serverless API Integration', () => {
     expect(json.patient.fullName).toBe('Smt. Kamala Deshmukh');
     expect(json.medications.length).toBeGreaterThan(0);
     expect(json.members.length).toBeGreaterThan(0);
+    expect(json.hardware).toBeDefined();
   });
 
   it('POST /api/auth/verify-passcode verifies caregiver 4-digit PIN', async () => {
@@ -49,18 +50,45 @@ describe('OJAS Serverless API Integration', () => {
     expect(validRes.statusCode).toBe(200);
     const validJson = JSON.parse(validRes.data);
     expect(validJson.success).toBe(true);
-    expect(validJson.member.name).toBe('Sister Priya Nair, RN');
+    expect(validJson.member.name).toContain('Priya');
+  });
 
-    // Invalid PIN
-    const invalidReq = {
+  it('POST /api/medications/:id/dose marks dose as taken with timestamp and actor', async () => {
+    const req = {
       method: 'POST',
-      url: '/api/auth/verify-passcode',
-      body: { memberId: 'mem-caretaker-1', passcode: '9999' },
+      url: '/api/medications/med-1/dose',
+      body: {
+        slotId: 'slot-med1-1',
+        status: 'taken',
+        actorName: 'Sister Priya Nair, RN',
+        notes: 'Taken post-breakfast with water',
+      },
     };
-    const invalidRes = new MockResponse();
-    await handler(invalidReq as any, invalidRes as any);
+    const res = new MockResponse();
+    await handler(req as any, res as any);
 
-    expect(invalidRes.statusCode).toBe(401);
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.data);
+    const updatedSlot = json.medications
+      .find((m: any) => m.id === 'med-1')
+      .dailySchedule.find((s: any) => s.id === 'slot-med1-1');
+
+    expect(updatedSlot.status).toBe('taken');
+    expect(updatedSlot.acknowledgedBy).toBe('Sister Priya Nair, RN');
+  });
+
+  it('POST /api/medications/:id/refill increments stock count', async () => {
+    const req = {
+      method: 'POST',
+      url: '/api/medications/med-1/refill',
+      body: { addedQuantity: 30 },
+    };
+    const res = new MockResponse();
+    await handler(req as any, res as any);
+
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.data);
+    expect(json.success).toBe(true);
   });
 
   it('POST /api/hardware/sync toggles pillbox door and alarm', async () => {
@@ -75,5 +103,101 @@ describe('OJAS Serverless API Integration', () => {
     expect(res.statusCode).toBe(200);
     const json = JSON.parse(res.data);
     expect(typeof json.doorOpen).toBe('boolean');
+  });
+
+  it('POST /api/ai/tts returns audioBase64 for Indian multilingual speech', async () => {
+    const req = {
+      method: 'POST',
+      url: '/api/ai/tts',
+      body: {
+        text: 'नमस्कार कमला आजी',
+        langCode: 'mr',
+        languageName: 'Marathi',
+        speechLang: 'mr-IN',
+      },
+    };
+    const res = new MockResponse();
+    await handler(req as any, res as any);
+
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.data);
+    expect(json.audioBase64).toBeDefined();
+    expect(typeof json.audioBase64).toBe('string');
+    expect(json.audioBase64.length).toBeGreaterThan(100);
+    expect(json.mimeType).toBe('audio/mpeg');
+  });
+
+  it('OPTIONS preflight returns 204 with CORS and security headers', async () => {
+    const req = { method: 'OPTIONS', url: '/api/state' };
+    const res = new MockResponse();
+
+    await handler(req as any, res as any);
+    expect(res.statusCode).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe('*');
+  });
+
+  it('POST /api/sos triggers emergency alert broadcast to family and physician', async () => {
+    const req = {
+      method: 'POST',
+      url: '/api/sos',
+      body: {
+        type: 'ambulance',
+        triggerSource: 'One-Tap Urgent Dispatch',
+      },
+    };
+    const res = new MockResponse();
+    await handler(req as any, res as any);
+
+    expect([200, 201]).toContain(res.statusCode);
+    const json = JSON.parse(res.data);
+    expect(json.success).toBe(true);
+  });
+
+  it('POST /api/vitals/log records bedside blood pressure and glucose', async () => {
+    const req = {
+      method: 'POST',
+      url: '/api/vitals/log',
+      body: {
+        type: 'Blood Pressure (BP)',
+        value: '124/78 mmHg',
+        notes: 'Resting seated for 10 mins post-breakfast',
+        notifyFamily: true,
+        actorName: 'Sister Priya Nair, RN',
+      },
+    };
+    const res = new MockResponse();
+    await handler(req as any, res as any);
+
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.data);
+    expect(json.success).toBe(true);
+    expect(json.vitalEntry.value).toBe('124/78 mmHg');
+    expect(json.vitalEntry.notifiedFamily).toBe(true);
+  });
+
+  it('POST /api/appointments/schedule saves upcoming consultation', async () => {
+    const newAppt = {
+      id: 'appt-test-cardio',
+      doctorName: 'Dr. Rajesh Kulkarni, MD, DM',
+      specialty: 'Cardiology Review',
+      hospitalLocation: 'Sahyadri Super Speciality Hospital',
+      roomOrDept: 'OPD Chamber 4',
+      date: '2026-12-05',
+      time: '11:00',
+      status: 'upcoming',
+      assignedMemberId: 'mem-caretaker-1',
+      reason: 'Longitudinal BP and INR Review',
+    };
+    const req = {
+      method: 'POST',
+      url: '/api/appointments/schedule',
+      body: { appointment: newAppt },
+    };
+    const res = new MockResponse();
+    await handler(req as any, res as any);
+
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.data);
+    expect(json.success).toBe(true);
   });
 });

@@ -38,13 +38,69 @@ async function parseBody(req: any): Promise<any> {
   });
 }
 
+// In-memory rate limiting map for PIN attempts
+const pinAttemptStore = new Map<string, { attempts: number; lockedUntil: number }>();
+
+function sanitizeString(input: unknown): string {
+  if (typeof input !== 'string') return '';
+  return input
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/[<>]/g, '')
+    .trim();
+}
+
 function sendJson(res: ServerResponse, statusCode: number, data: any) {
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'application/json');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.end(JSON.stringify(data));
+}
+
+/**
+ * Call Groq API for ultra-fast, free-tier multilingual LLM & vision inference
+ * Models: llama-3.3-70b-versatile, llama-3.1-8b-instant, llama-3.2-11b-vision-preview
+ */
+async function callGroqChat(
+  messages: Array<{ role: string; content: any }>,
+  options?: { json?: boolean; model?: string }
+): Promise<string | null> {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return null;
+  const model = options?.model || process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+  const payload: any = {
+    model,
+    messages,
+    temperature: 0.2,
+  };
+  if (options?.json) {
+    payload.response_format = { type: 'json_object' };
+  }
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      console.warn('Groq API error:', res.status, errText);
+      return null;
+    }
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || null;
+  } catch (err) {
+    console.warn('Groq fetch failed:', err);
+    return null;
+  }
 }
 
 export default async function handler(req: any, res: any) {
@@ -81,10 +137,38 @@ export default async function handler(req: any, res: any) {
     if (member.role === 'elderly' || member.role === 'family') {
       return sendJson(res, 200, { success: true, member });
     }
+
+    const now = Date.now();
+    const rateKey = String(memberId);
+    const rateInfo = pinAttemptStore.get(rateKey) || { attempts: 0, lockedUntil: 0 };
+
+    if (rateInfo.lockedUntil > now) {
+      const waitSec = Math.ceil((rateInfo.lockedUntil - now) / 1000);
+      return sendJson(res, 429, {
+        error: `Too many failed attempts. Please wait ${waitSec} seconds before trying again.`,
+        locked: true,
+      });
+    }
+
     if (member.passcode === passcode) {
+      pinAttemptStore.delete(rateKey);
       return sendJson(res, 200, { success: true, member });
     }
-    return sendJson(res, 401, { error: 'Invalid 4-digit PIN.' });
+
+    rateInfo.attempts += 1;
+    if (rateInfo.attempts >= 5) {
+      rateInfo.lockedUntil = now + 60000; // 60s lockout
+      pinAttemptStore.set(rateKey, rateInfo);
+      return sendJson(res, 429, {
+        error: 'Too many failed attempts. Account temporarily locked for 60 seconds.',
+        locked: true,
+      });
+    }
+    pinAttemptStore.set(rateKey, rateInfo);
+    return sendJson(res, 401, {
+      error: `Invalid 4-digit PIN. (${5 - rateInfo.attempts} attempts remaining)`,
+      attemptsRemaining: 5 - rateInfo.attempts,
+    });
   }
 
   // Route 3: POST /api/medications/:id/dose
@@ -100,10 +184,10 @@ export default async function handler(req: any, res: any) {
       slot.status = status;
       if (status === 'taken') {
         slot.acknowledgedAt = new Date().toISOString();
-        slot.acknowledgedBy = actorName || 'User';
+        slot.acknowledgedBy = sanitizeString(actorName) || 'User';
       }
       if (notes !== undefined) {
-        slot.notes = notes;
+        slot.notes = sanitizeString(notes);
       }
     }
     return sendJson(res, 200, memoryDb);
@@ -119,7 +203,7 @@ export default async function handler(req: any, res: any) {
 
     const slot = med.dailySchedule?.find((s: any) => s.id === slotId);
     if (slot) {
-      slot.notes = notes;
+      slot.notes = sanitizeString(notes);
     }
     return sendJson(res, 200, { success: true, memoryDb });
   }
@@ -191,6 +275,467 @@ export default async function handler(req: any, res: any) {
     });
     res.write(`data: ${JSON.stringify(memoryDb)}\n\n`);
     return res.end();
+  }
+
+  // Route 11: POST /api/ai/tts (Multilingual Indian Speech Synthesis)
+  if (method === 'POST' && path === '/api/ai/tts') {
+    try {
+      const { text, languageName, speechLang, langCode } = body as {
+        text?: string;
+        languageName?: string;
+        speechLang?: string;
+        langCode?: string;
+      };
+      if (!text || !text.trim()) {
+        return sendJson(res, 400, { error: 'Text is required for speech synthesis.' });
+      }
+
+      const tlCode = (
+        langCode ||
+        (speechLang ? speechLang.split('-')[0] : 'en')
+      ).toLowerCase();
+
+      let spokenText = text.trim();
+
+      // If a non-English Indian language is selected and caller passed English string,
+      // translate into native script using GROQ (first) or Gemini (fallback)
+      if (tlCode !== 'en' && !/[^\u0000-\u007F]/.test(spokenText)) {
+        let translatedText: string | null = null;
+        if (process.env.GROQ_API_KEY) {
+          try {
+            translatedText = await callGroqChat([
+              {
+                role: 'system',
+                content: `You are an expert medical translator for elderly Indian patients. Translate this healthcare instruction into natural spoken ${
+                  languageName || tlCode
+                } written strictly in its native Indian script (e.g. Devanagari for Hindi/Marathi, Tamil script for Tamil, Kannada script for Kannada, Bengali script for Bengali). Transliterate medicine brand names phonetically into the native script. Output ONLY the translated sentence with no quotes, notes, or markdown.`,
+              },
+              { role: 'user', content: spokenText },
+            ]);
+          } catch {}
+        } else if (process.env.GEMINI_API_KEY) {
+          try {
+            const { GoogleGenAI } = await import('@google/genai');
+            const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+            const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+            const trResp = await ai.models.generateContent({
+              model,
+              contents: `Translate the following healthcare instruction for an elderly Indian patient into natural spoken ${
+                languageName || tlCode
+              } written strictly in its native Indian script: ${spokenText}`,
+            });
+            if (trResp.text?.trim()) translatedText = trResp.text.trim();
+          } catch {}
+        }
+
+        if (translatedText && translatedText.trim()) {
+          spokenText = translatedText.trim();
+        }
+      }
+
+      // Split text into <= 140 character sentence chunks so regional TTS never truncates or returns 400
+      const rawSentences = spokenText.split(/(?<=[।.!?;\n])\s+/);
+      const chunks: string[] = [];
+      const maxLen = 140;
+      for (const sentence of rawSentences) {
+        if (sentence.length <= maxLen) {
+          if (sentence.trim()) chunks.push(sentence.trim());
+        } else {
+          const words = sentence.split(/\s+/);
+          let current = '';
+          for (const word of words) {
+            if ((current + ' ' + word).trim().length <= maxLen) {
+              current = (current + ' ' + word).trim();
+            } else {
+              if (current) chunks.push(current);
+              current = word;
+            }
+          }
+          if (current) chunks.push(current);
+        }
+      }
+
+      const audioBuffers: Buffer[] = [];
+      for (const chunk of chunks.filter(Boolean)) {
+        const ttsUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(
+          chunk
+        )}&tl=${encodeURIComponent(tlCode)}&client=gtx`;
+        const ttsRes = await fetch(ttsUrl, {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          },
+        });
+        if (ttsRes.ok) {
+          const arrBuf = await ttsRes.arrayBuffer();
+          if (arrBuf.byteLength > 0) {
+            audioBuffers.push(Buffer.from(arrBuf));
+          }
+        }
+      }
+
+      if (audioBuffers.length > 0) {
+        const combinedMp3 = Buffer.concat(audioBuffers).toString('base64');
+        return sendJson(res, 200, {
+          audioBase64: combinedMp3,
+          audioWavBase64: combinedMp3,
+          mimeType: 'audio/mpeg',
+          spokenText,
+        });
+      }
+
+      return sendJson(res, 200, { audioBase64: null, audioWavBase64: null, fallback: true });
+    } catch (error) {
+      return sendJson(res, 200, {
+        audioBase64: null,
+        audioWavBase64: null,
+        fallback: true,
+        reason: error instanceof Error ? error.message : 'TTS fallback active',
+      });
+    }
+  }
+
+  // Route 12: POST /api/ai/interaction-check
+  if (method === 'POST' && path === '/api/ai/interaction-check') {
+    try {
+      const { candidateMedication } = body as { candidateMedication?: string };
+      const medSummary = (memoryDb.medications || [])
+        .map((m: any) => `- ${m.name} (${m.genericName}), ${m.dosage}, ${m.frequency} for ${m.purpose}`)
+        .join('\n');
+      const clinicalPrompt = `Analyze the following Indian elderly patient's active medication regimen, allergies, and health conditions for drug-drug interactions, duplicate therapy warnings, and allergy/condition contraindications.
+Patient: ${memoryDb.patient?.fullName}, Age ${memoryDb.patient?.age} (Pune, India)
+Conditions: ${(memoryDb.patient?.conditions || []).join(', ')}
+Allergies: ${(memoryDb.patient?.allergies || []).join(', ')}
+Restrictions: ${(memoryDb.patient?.medicationRestrictions || []).join('; ')}
+Active Medications:
+${medSummary}
+${candidateMedication ? `\nCandidate New Medication to Check: ${candidateMedication}` : ''}`;
+
+      // 1. Try GROQ (llama-3.3-70b-versatile)
+      if (process.env.GROQ_API_KEY) {
+        const groqPrompt = `${clinicalPrompt}
+Return a JSON object with a key "warnings" containing an array of objects:
+{
+  "warnings": [
+    {
+      "severity": "high",
+      "title": "Concise warning title",
+      "medicationsInvolved": ["Medication Name"],
+      "explanation": "Clear clinical explanation",
+      "recommendation": "Actionable recommendation"
+    }
+  ]
+}`;
+        const raw = await callGroqChat(
+          [
+            { role: 'system', content: 'You are an expert clinical pharmacologist for Indian elderly healthcare. Output strictly valid JSON only.' },
+            { role: 'user', content: groqPrompt },
+          ],
+          { json: true }
+        );
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            const warnings = Array.isArray(parsed) ? parsed : parsed.warnings || [];
+            return sendJson(res, 200, { warnings });
+          } catch {}
+        }
+      }
+
+      // 2. Try Gemini
+      if (process.env.GEMINI_API_KEY) {
+        const { GoogleGenAI, Type } = await import('@google/genai');
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const response = await ai.models.generateContent({
+          model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+          contents: clinicalPrompt,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  severity: { type: Type.STRING, description: 'high, moderate, or low' },
+                  title: { type: Type.STRING, description: 'Concise warning title' },
+                  medicationsInvolved: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  explanation: { type: Type.STRING, description: 'Clear clinical explanation' },
+                  recommendation: { type: Type.STRING, description: 'Actionable safety recommendation' },
+                },
+                required: ['severity', 'title', 'medicationsInvolved', 'explanation', 'recommendation'],
+              },
+            },
+          },
+        });
+        const parsed = JSON.parse((response.text ?? '[]').trim());
+        return sendJson(res, 200, { warnings: parsed });
+      }
+
+      // 3. Resilient static clinical fallback
+      return sendJson(res, 200, {
+        warnings: [
+          {
+            severity: 'moderate',
+            title: 'Monitoring Blood Pressure with Telmisartan + Amlodipine',
+            medicationsInvolved: ['Telmisartan 40mg', 'Amlodipine 5mg'],
+            explanation: 'Dual anti-hypertensive combination requires regular blood pressure monitoring.',
+            recommendation: 'Check BP seated daily, preferably at 09:00 AM.',
+          },
+        ],
+      });
+    } catch (error) {
+      return sendJson(res, 200, {
+        warnings: [],
+        error: error instanceof Error ? error.message : 'Interaction check fallback',
+      });
+    }
+  }
+
+  // Route 13: POST /api/ai/weekly-summary
+  if (method === 'POST' && path === '/api/ai/weekly-summary') {
+    try {
+      const totalSlots = (memoryDb.medications || []).reduce((acc: number, m: any) => acc + (m.dailySchedule?.length || 0), 0);
+      const takenSlots = (memoryDb.medications || []).reduce(
+        (acc: number, m: any) => acc + (m.dailySchedule?.filter((s: any) => s.status === 'taken').length || 0),
+        0
+      );
+      const missedSlots = (memoryDb.medications || []).reduce(
+        (acc: number, m: any) => acc + (m.dailySchedule?.filter((s: any) => s.status === 'missed').length || 0),
+        0
+      );
+
+      const summaryPrompt = `Generate a structured weekly healthcare & adherence summary for Indian elderly patient ${memoryDb.patient?.fullName} (Age ${memoryDb.patient?.age}, Pune).
+Adherence: ${takenSlots}/${totalSlots} doses taken today, ${missedSlots} missed.
+Medications: ${(memoryDb.medications || []).map((m: any) => `${m.name} ${m.dosage}`).join(', ')}
+Vitals: ${(memoryDb.dailyRoutine || []).map((r: any) => `${r.title}: ${r.completed ? r.valueRecorded || 'Completed' : 'Pending'}`).join('; ')}`;
+
+      // 1. Try GROQ (llama-3.3-70b-versatile)
+      if (process.env.GROQ_API_KEY) {
+        const groqPrompt = `${summaryPrompt}
+Return a JSON object with exactly these fields:
+{
+  "headline": "Empowering headline for family and nurse",
+  "adherenceAssessment": "Summary of medication adherence",
+  "vitalsAndRoutineHighlights": "Key vitals analysis (BP, sugar)",
+  "attentionItems": ["Item 1", "Item 2"],
+  "caretakerNextSteps": ["Step 1", "Step 2"]
+}`;
+        const raw = await callGroqChat(
+          [
+            { role: 'system', content: 'You are a warm, clinical geriatric physician in Pune, India. Output strictly valid JSON only.' },
+            { role: 'user', content: groqPrompt },
+          ],
+          { json: true }
+        );
+        if (raw) {
+          try {
+            const summary = JSON.parse(raw);
+            return sendJson(res, 200, summary);
+          } catch {}
+        }
+      }
+
+      // 2. Try Gemini
+      if (process.env.GEMINI_API_KEY) {
+        const { GoogleGenAI, Type } = await import('@google/genai');
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const response = await ai.models.generateContent({
+          model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+          contents: summaryPrompt,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                headline: { type: Type.STRING },
+                adherenceAssessment: { type: Type.STRING },
+                vitalsAndRoutineHighlights: { type: Type.STRING },
+                attentionItems: { type: Type.ARRAY, items: { type: Type.STRING } },
+                caretakerNextSteps: { type: Type.ARRAY, items: { type: Type.STRING } },
+              },
+              required: ['headline', 'adherenceAssessment', 'vitalsAndRoutineHighlights', 'attentionItems', 'caretakerNextSteps'],
+            },
+          },
+        });
+        const summary = JSON.parse((response.text ?? '{}').trim());
+        return sendJson(res, 200, summary);
+      }
+
+      // 3. Static fallback
+      return sendJson(res, 200, {
+        headline: 'Kamala Deshmukh - Stable Weekly Medication & Vitals Briefing',
+        adherenceAssessment: 'Overall adherence is high across morning and night cardiac doses.',
+        vitalsAndRoutineHighlights: 'Blood pressure and blood glucose remained within physician-prescribed bounds.',
+        attentionItems: ['Refill Ecosprin 75mg within 6 days.'],
+        caretakerNextSteps: ['Continue seated BP measurements every morning post-Nashta.'],
+      });
+    } catch (error) {
+      return sendJson(res, 500, { error: error instanceof Error ? error.message : 'Failed to generate summary' });
+    }
+  }
+
+  // Route 14: POST /api/ai/schedule-assistant
+  if (method === 'POST' && path === '/api/ai/schedule-assistant') {
+    try {
+      const { userMessage, imageBase64, imageMimeType } = body as {
+        userMessage?: string;
+        imageBase64?: string;
+        imageMimeType?: string;
+      };
+
+      // 1. Try GROQ (supports vision with llama-3.2-11b-vision-preview or text with llama-3.3-70b-versatile)
+      if (process.env.GROQ_API_KEY) {
+        const isVision = Boolean(imageBase64 && imageMimeType);
+        const model = isVision ? 'llama-3.2-11b-vision-preview' : 'llama-3.3-70b-versatile';
+        const userContent: any = isVision
+          ? [
+              {
+                type: 'text',
+                text: `Analyze this prescription image for Indian elderly patient ${memoryDb.patient?.fullName} (Age ${memoryDb.patient?.age}). Request: ${userMessage || 'Suggest schedule around Indian meals (Morning Nashta, Lunch, Night Dinner).'}`
+              },
+              {
+                type: 'image_url',
+                image_url: { url: `data:${imageMimeType};base64,${imageBase64}` }
+              }
+            ]
+          : `You are the OJAS India AI Medication Schedule Assistant for ${memoryDb.patient?.fullName} (Age ${memoryDb.patient?.age}, Pune).
+User Request: ${userMessage || 'Suggest a safe schedule around Indian meals.'}`;
+
+        const promptSys = `You are the OJAS India AI Medication Schedule Assistant.
+Return a valid JSON object with:
+{
+  "spokenReply": "Clear, comforting response for an elderly Indian patient",
+  "clinicalNotes": "Indian meal pairing advice and schedule rationale",
+  "hasSuggestedMedication": false
+}`;
+        const raw = await callGroqChat(
+          [
+            { role: 'system', content: promptSys },
+            { role: 'user', content: userContent },
+          ],
+          { json: true, model }
+        );
+        if (raw) {
+          try {
+            const result = JSON.parse(raw);
+            return sendJson(res, 200, result);
+          } catch {}
+        }
+      }
+
+      // 2. Try Gemini
+      if (process.env.GEMINI_API_KEY) {
+        const { GoogleGenAI, Type } = await import('@google/genai');
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const contextText = `You are the OJAS India AI Medication Schedule Assistant for ${memoryDb.patient?.fullName} (Age ${memoryDb.patient?.age}).
+User Request: ${userMessage || 'Analyze prescription image.'}`;
+
+        const parts: any[] = [];
+        if (imageBase64 && imageMimeType) {
+          parts.push({ inlineData: { mimeType: imageMimeType, data: imageBase64 } });
+        }
+        parts.push({ text: contextText });
+
+        const response = await ai.models.generateContent({
+          model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+          contents: { parts },
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                spokenReply: { type: Type.STRING },
+                clinicalNotes: { type: Type.STRING },
+                hasSuggestedMedication: { type: Type.BOOLEAN },
+                suggestedMedication: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    dosage: { type: Type.STRING },
+                    frequency: { type: Type.STRING },
+                    duration: { type: Type.STRING },
+                    instructions: { type: Type.STRING },
+                    purpose: { type: Type.STRING },
+                    scheduledTimes: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  },
+                  required: ['name', 'dosage', 'frequency', 'duration', 'instructions', 'purpose', 'scheduledTimes'],
+                },
+              },
+              required: ['spokenReply', 'clinicalNotes', 'hasSuggestedMedication'],
+            },
+          },
+        });
+        const result = JSON.parse((response.text ?? '{}').trim());
+        return sendJson(res, 200, result);
+      }
+
+      // 3. Static fallback
+      return sendJson(res, 200, {
+        spokenReply: 'नमस्ते, आपकी दवाइयां नाश्ते और रात के खाने के समय निर्धारित हैं। सभी खुराक समय पर लें।',
+        clinicalNotes: 'Maintain regular timings around meals. Do not double up missed doses.',
+        hasSuggestedMedication: false,
+      });
+    } catch (error) {
+      return sendJson(res, 500, { error: error instanceof Error ? error.message : 'Assistant error' });
+    }
+  }
+
+  // Route: POST /api/doctor/share-report
+  if (method === 'POST' && path === '/api/doctor/share-report') {
+    const { recipientDoctorEmail, customNote, notes, includeVitals, includeAdherence, includeAdherenceTrends, actorName } = body;
+    const doc = memoryDb.patient?.primaryDoctor || {
+      name: 'Dr. Rajesh Kulkarni, MD, DM',
+      hospital: 'Sahyadri Super Speciality Hospital, Pune',
+      email: 'dr.kulkarni@sahyadrihospitals.com',
+    };
+    const totalSlots = memoryDb.medications?.flatMap((m: any) => m.dailySchedule || []) || [];
+    const takenSlots = totalSlots.filter((s: any) => s.status === 'taken').length;
+    const adherenceRate = totalSlots.length > 0 ? Math.round((takenSlots / totalSlots.length) * 100) : 100;
+
+    const message = `Structured clinical report successfully dispatched to ${doc.name} at ${doc.hospital} (${doc.email}). Adherence: ${adherenceRate}%.`;
+
+    return sendJson(res, 200, {
+      success: true,
+      message,
+      recipient: doc.email,
+      doctorName: doc.name,
+      adherenceRate,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // Route: POST /api/notifications/whatsapp-dispatch
+  if (method === 'POST' && path === '/api/notifications/whatsapp-dispatch') {
+    const { recipientPhone, recipientName, alertType, messageType, customMessage, customText, actorName } = body;
+    const targetPhone = recipientPhone || '+91 98201 11223';
+    const formattedMsg = customMessage || customText || `[OJAS ALERT] Patient update for ${memoryDb.patient?.fullName || 'Smt. Kamala Deshmukh'}.`;
+
+    return sendJson(res, 200, {
+      success: true,
+      dispatchedTo: targetPhone,
+      recipientName: recipientName || 'Care Circle Member',
+      protocol: 'WhatsApp Business API (Simulated)',
+      message: formattedMsg,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // Route: POST /api/vitals/log
+  if (method === 'POST' && path === '/api/vitals/log') {
+    const { type, value, notes, notifyFamily, actorName } = body;
+    const vitalEntry = {
+      id: `vital-${Date.now()}`,
+      type: sanitizeString(type) || 'Blood Pressure (BP)',
+      value: sanitizeString(value) || '120/80 mmHg',
+      notes: sanitizeString(notes) || '',
+      recordedAt: new Date().toISOString(),
+      recordedBy: sanitizeString(actorName) || 'Sister Priya Nair, RN',
+      notifiedFamily: !!notifyFamily,
+    };
+    memoryDb.vitalsLogs = memoryDb.vitalsLogs || [];
+    memoryDb.vitalsLogs.push(vitalEntry);
+
+    return sendJson(res, 200, { success: true, vitalEntry, memoryDb });
   }
 
   // Generic fallback for any other clinical POST/PUT/GET endpoint
