@@ -324,8 +324,8 @@ async function startServer() {
       avatarUrl:
         member.avatarUrl ||
         (member.role === 'caretaker'
-          ? '/src/assets/images/avatar_caretaker_priya_1794718340849.jpg'
-          : '/src/assets/images/avatar_family_rohan_1794718340820.jpg'),
+          ? '/caregiver.jpg'
+          : '/familymember.jpg'),
       status: 'active',
       consentGrantedByPatient: true,
       permissions: member.permissions || {
