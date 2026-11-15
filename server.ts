@@ -1166,6 +1166,171 @@ async function startServer() {
   });
 
   // Emergency SOS Trigger
+  app.post('/api/sos', (req: Request, res: Response) => {
+    const { actorName, message, locationNote } = req.body;
+    const emailLog = dispatchEmailNotification(
+      'sos_emergency',
+      `[URGENT SOS ALERT] Emergency Assistance Requested by ${dbState.patient.fullName}`,
+      `EMERGENCY SOS TRIGGERED AT ${nowFormatted()}!\nPatient: ${dbState.patient.fullName} (Age ${dbState.patient.age}, Blood Group ${dbState.patient.bloodGroup})\nAddress: ${dbState.patient.address}\nNote: ${message || 'Immediate assistance requested via One-Tap Emergency SOS.'}\nLocation context: ${locationNote || 'Pune Residence'}\nAllergies: ${dbState.patient.allergies.join(', ')}\nEmergency Contacts Notified: ${dbState.patient.emergencyContacts.map((c) => `${c.name} (${c.phone})`).join(', ')}`
+    );
+    dbState.hardware.buzzerActive = true;
+    dbState.hardware.voicePromptActive = true;
+    addActivityLog(
+      actorName || dbState.patient.fullName,
+      'elderly',
+      'TRIGGERED EMERGENCY SOS ALERT',
+      'emergency',
+      `High-priority SOS broadcast sent to all emergency contacts & caretakers (${emailLog.recipients.join(', ')}).`
+    );
+    saveAndBroadcast();
+    res.json({ success: true, emailLog });
+  });
+
+  // Notification settings & manual reminder dispatch
+  app.put('/api/notifications/settings', (req: Request, res: Response) => {
+    const { actorName, actorRole, settings } = req.body;
+    dbState.notificationSettings = {
+      ...dbState.notificationSettings,
+      ...settings,
+    };
+    addActivityLog(
+      actorName || 'Rohan Deshmukh',
+      actorRole || 'family',
+      'Updated Smart Notification Rules',
+      'security',
+      `Updated email reminder frequency (${dbState.notificationSettings.reminderFrequency}) and escalation settings.`
+    );
+    saveAndBroadcast();
+    res.json(dbState.notificationSettings);
+  });
+
+  app.post('/api/notifications/send-reminder', (req: Request, res: Response) => {
+    const { type, subject, body, recipients, actorName, actorRole } = req.body;
+    const log = dispatchEmailNotification(
+      type || 'upcoming_dose',
+      subject || `[CAREBRIDGE REMINDER] Medication & Health Check for ${dbState.patient.fullName}`,
+      body || `Friendly reminder to review upcoming doses for ${dbState.patient.fullName}.`,
+      recipients
+    );
+    addActivityLog(
+      actorName || 'Sister Priya Nair, RN',
+      actorRole || 'caretaker',
+      'Dispatched Automated Email Alert',
+      'medication',
+      `Sent "${log.subject}" to ${log.recipients.join(', ')}.`
+    );
+    saveAndBroadcast();
+    res.json(log);
+  });
+
+  const handleAcknowledgeNotification = (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { actorName, actorRole } = req.body || {};
+    const email = dbState.emailLogs.find((e) => e.id === id);
+    if (!email) {
+      res.status(404).json({ error: 'Notification not found' });
+      return;
+    }
+    email.acknowledged = true;
+    addActivityLog(
+      actorName || 'Sister Priya Nair, RN',
+      actorRole || 'caretaker',
+      'Acknowledged Escalation / Alert',
+      'medication',
+      `Acknowledged notification: "${email.subject}".`
+    );
+    saveAndBroadcast();
+    res.json(email);
+  };
+
+  app.post('/api/notifications/:id/acknowledge', handleAcknowledgeNotification);
+  app.post('/api/notifications/:id/ack', handleAcknowledgeNotification);
+
+  // ESP32 Smart Pillbox Hardware Integration Endpoints
+  app.post('/api/hardware/sync', (req: Request, res: Response) => {
+    const { action, compartmentNumber, actorName, actorRole } = req.body as {
+      action: 'trigger_alarm' | 'physical_button_confirm' | 'scan_nfc' | 'silence_alarm' | 'ping_sync';
+      compartmentNumber?: number;
+      actorName?: string;
+      actorRole?: string;
+    };
+
+    if (actorRole === 'family' && action === 'physical_button_confirm') {
+      res.status(403).json({
+        error: 'Remote Family Member cannot press the physical ESP32 pillbox button.',
+      });
+      return;
+    }
+
+    dbState.hardware.lastSyncAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+    if (action === 'trigger_alarm') {
+      const slotNum = compartmentNumber || 3;
+      dbState.hardware.activeSlotLed = slotNum;
+      dbState.hardware.buzzerActive = true;
+      dbState.hardware.voicePromptActive = true;
+      addActivityLog(
+        'ESP32 Smart Pillbox',
+        'hardware',
+        `Activated Slot #${slotNum} LED & Voice Alert`,
+        'hardware',
+        `Hardware box illuminated Compartment #${slotNum} LED and started audio reminder.`
+      );
+    } else if (action === 'physical_button_confirm') {
+      const slotNum = compartmentNumber || dbState.hardware.activeSlotLed || 3;
+      const med = dbState.medications.find((m) => m.compartmentNumber === slotNum) || dbState.medications[0];
+      if (med) {
+        const targetSlot =
+          med.dailySchedule.find((s) => s.status === 'pending' || s.status === 'missed') ||
+          med.dailySchedule[0];
+        if (targetSlot) {
+          targetSlot.status = 'taken';
+          targetSlot.acknowledgedAt = new Date().toTimeString().slice(0, 5);
+          targetSlot.acknowledgedBy = `${actorName || dbState.patient.fullName} (ESP32 Button)`;
+          targetSlot.escalated = false;
+          if (med.stockCount > 0) med.stockCount -= 1;
+        }
+        dbState.hardware.lastScannedQrOrNfc = med.nfcTagId;
+      }
+      dbState.hardware.activeSlotLed = null;
+      dbState.hardware.buzzerActive = false;
+      dbState.hardware.voicePromptActive = false;
+      dbState.hardware.lastPhysicalButtonPressAt = dbState.hardware.lastSyncAt;
+      addActivityLog(
+        actorName || dbState.patient.fullName,
+        'hardware',
+        'Physical Pillbox Intake Button Pressed',
+        'hardware',
+        `ESP32 Compartment #${slotNum} intake confirmed via physical hardware switch.`
+      );
+    } else if (action === 'scan_nfc') {
+      const slotNum = compartmentNumber || 1;
+      const med = dbState.medications.find((m) => m.compartmentNumber === slotNum);
+      if (med) {
+        dbState.hardware.lastScannedQrOrNfc = med.nfcTagId;
+        addActivityLog(
+          'ESP32 NFC Reader',
+          'hardware',
+          `Verified NFC Tag ${med.nfcTagId}`,
+          'hardware',
+          `Authenticated strip for ${med.name} (${med.dosage}) in Compartment #${slotNum}.`
+        );
+      }
+    } else if (action === 'silence_alarm') {
+      dbState.hardware.buzzerActive = false;
+      dbState.hardware.voicePromptActive = false;
+      dbState.hardware.activeSlotLed = null;
+    }
+
+    saveAndBroadcast();
+    res.json(dbState.hardware);
+  });
+
+  // ============================================================================
+  // SERVER-SIDE GEMINI AI ENDPOINTS (@google/genai)
+  // ============================================================================
+
+  // 1. Medicine Interaction, Allergy & Duplicate Therapy Checker
   // Vite middleware for development or static serving for production
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
