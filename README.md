@@ -1,4 +1,13 @@
-# CareBridge (OJAS): Interconnected ElderCare & Medication Adherence Platform
+# OJAS (ओजस्) — Vital Elder Care & Smart Medication Ecosystem
+
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-ojas--catalyst26.vercel.app-brightgreen?style=for-the-badge&logo=vercel)](https://ojas-catalyst26.vercel.app/)
+[![GitHub Repo](https://img.shields.io/badge/GitHub-Repository-blue?style=for-the-badge&logo=github)](https://github.com/yashkoparde/ojas)
+[![Built for Catalyst](https://img.shields.io/badge/Catalyst%202026-Solo%20AI%20Hackathon-orange?style=for-the-badge)](https://ojas-catalyst26.vercel.app/)
+
+> **Live Deployment:** [https://ojas-catalyst26.vercel.app/](https://ojas-catalyst26.vercel.app/)  
+> **Source Code:** [https://github.com/yashkoparde/ojas](https://github.com/yashkoparde/ojas)
+
+---
 
 ## Executive Summary
 
