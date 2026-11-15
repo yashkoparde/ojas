@@ -234,6 +234,37 @@ describe('OJAS Domain-Driven Design (DDD) Core Architecture Suite', () => {
       expect(res.allowed).toBe(false);
       expect(res.reason).toContain('restricted');
     });
+
+    it('enforces sovereign patient management of access delegation', () => {
+      const patient = INITIAL_DB.members.find((m) => m.role === 'elderly')!;
+      const caregiver = INITIAL_DB.members.find((m) => m.role === 'caretaker')!;
+
+      const patientResult = RbacSecurityGuard.checkPermission(patient, 'manage_access');
+      expect(patientResult.allowed).toBe(true);
+
+      const caregiverResult = RbacSecurityGuard.checkPermission(caregiver, 'manage_access');
+      expect(caregiverResult.allowed).toBe(false);
+      expect(caregiverResult.reason).toContain('sovereignty');
+    });
+
+    it('handles member deletion and view permissions correctly', () => {
+      const patient = INITIAL_DB.members.find((m) => m.role === 'elderly')!;
+      const family = INITIAL_DB.members.find((m) => m.role === 'family')!;
+
+      expect(RbacSecurityGuard.checkPermission(patient, 'delete').allowed).toBe(true);
+      expect(RbacSecurityGuard.checkPermission(family, 'view').allowed).toBe(true);
+      expect(RbacSecurityGuard.checkPermission(family, 'invalid' as any).allowed).toBe(false);
+    });
+
+    it('verifies 4-digit PIN for role elevation and passcodes', () => {
+      const caregiver = INITIAL_DB.members.find((m) => m.role === 'caretaker')!;
+      const patient = INITIAL_DB.members.find((m) => m.role === 'elderly')!;
+
+      expect(RbacSecurityGuard.verifyPin(caregiver, '2468')).toBe(true);
+      expect(RbacSecurityGuard.verifyPin(caregiver, '0000')).toBe(false);
+      expect(RbacSecurityGuard.verifyPin(patient, '1234')).toBe(true);
+      expect(RbacSecurityGuard.verifyPin(patient, '')).toBe(true);
+    });
   });
 
   describe('PillboxHardwareController', () => {
@@ -258,6 +289,49 @@ describe('OJAS Domain-Driven Design (DDD) Core Architecture Suite', () => {
 
       const silenced = PillboxHardwareController.transitionHardwareState(alarmed, 'silence_alarm');
       expect(silenced.buzzerActive).toBe(false);
+
+      const ledSwitched = PillboxHardwareController.transitionHardwareState(initial, 'set_active_led', 3);
+      expect(ledSwitched.activeSlotLed).toBe(3);
+    });
+  });
+
+  describe('VitalsClassificationService Extreme Ranges', () => {
+    it('identifies mild hypoxia and critical hypoxia', () => {
+      const mild = VitalsClassificationService.evaluateSpO2(93);
+      expect(mild.status).toBe('Mild Hypoxia');
+      expect(mild.isAlert).toBe(true);
+
+      const normal = VitalsClassificationService.evaluateSpO2(98);
+      expect(normal.status).toBe('Normal');
+      expect(normal.isAlert).toBe(false);
+    });
+
+    it('identifies bradycardia and tachycardia', () => {
+      const brady = VitalsClassificationService.evaluateHeartRate(45);
+      expect(brady.status).toBe('Bradycardia');
+      expect(brady.isAlert).toBe(true);
+
+      const tachy = VitalsClassificationService.evaluateHeartRate(110);
+      expect(tachy.status).toBe('Tachycardia');
+      expect(tachy.isAlert).toBe(true);
+
+      const normal = VitalsClassificationService.evaluateHeartRate(72);
+      expect(normal.status).toBe('Normal Resting');
+      expect(normal.isAlert).toBe(false);
+    });
+
+    it('evaluates fasting blood glucose categories accurately', () => {
+      const normalFasting = VitalsClassificationService.evaluateGlucose(95, true);
+      expect(normalFasting.category).toBe('Optimal Fasting');
+      expect(normalFasting.isAlert).toBe(false);
+
+      const elevatedFasting = VitalsClassificationService.evaluateGlucose(120, true);
+      expect(elevatedFasting.category).toBe('Elevated');
+      expect(elevatedFasting.isAlert).toBe(false);
+
+      const postprandial = VitalsClassificationService.evaluateGlucose(160, false);
+      expect(postprandial.category).toBe('Elevated');
+      expect(postprandial.isAlert).toBe(false);
     });
   });
 });

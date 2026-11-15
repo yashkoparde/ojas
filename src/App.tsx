@@ -88,9 +88,9 @@ export default function App() {
   const [lang, setLang] = useState<LanguageCode>('en');
   const [highContrast, setHighContrast] = useState<boolean>(false);
 
-  // Caregiver PIN prompt state on the Netflix-styled profile selection screen
-  const [caregiverTarget, setCaregiverTarget] = useState<AuthorizedMember | null>(null);
-  const [caregiverPin, setCaregiverPin] = useState<string>('');
+  // Shared Ecosystem Authentication: Passcode-based access for Elderly, Caregiver & Family
+  const [authTarget, setAuthTarget] = useState<AuthorizedMember | null>(null);
+  const [authPin, setAuthPin] = useState<string>('');
   const [pinError, setPinError] = useState<string | null>(null);
   const [verifyingPin, setVerifyingPin] = useState<boolean>(false);
 
@@ -382,8 +382,8 @@ export default function App() {
   );
 
   // Handle Netflix-styled profile selection:
-  // Patient & Family require NO PIN; Caregiver requires 4-digit PIN (2468).
-  const handleSelectProfile = async (member: AuthorizedMember) => {
+  // Secure, passcode-based access for Elderly, Caregiver & Family members
+  const handleSelectProfile = (member: AuthorizedMember) => {
     if (member.status === 'revoked' || !member.consentGrantedByPatient) {
       showToast(
         `Access for ${member.name} has been revoked by Patient Smt. Kamala Deshmukh.`
@@ -391,67 +391,69 @@ export default function App() {
       return;
     }
 
-    if (member.role === 'caretaker') {
-      setCaregiverTarget(member);
-      setCaregiverPin('');
-      setPinError(null);
-      return;
-    }
-
-    // Patient (elderly) or Family: immediate entry with NO PIN
-    try {
-      await fetch('/api/auth/verify-passcode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: member.id }),
-      });
-    } catch {
-      // Offline entry allowed
-    }
-    setCurrentMemberId(member.id);
-    setActiveTab('overview');
-    setStage('main');
-    showToast(`Welcome to OJAS, ${member.name}`);
+    setAuthTarget(member);
+    setAuthPin('');
+    setPinError(null);
   };
 
-  const handleVerifyCaregiverPin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!caregiverTarget) return;
+  const handleVerifyPasscode = async (e?: React.FormEvent, directPin?: string) => {
+    if (e) e.preventDefault();
+    if (!authTarget) return;
+
+    const pinToVerify = directPin !== undefined ? directPin : authPin;
     setVerifyingPin(true);
     setPinError(null);
+
     try {
       const res = await fetch('/api/auth/verify-passcode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          memberId: caregiverTarget.id,
-          passcode: caregiverPin,
+          memberId: authTarget.id,
+          passcode: pinToVerify,
         }),
       });
       if (res.ok) {
-        setCurrentMemberId(caregiverTarget.id);
-        setCaregiverTarget(null);
-        setCaregiverPin('');
+        setCurrentMemberId(authTarget.id);
+        const roleLabel =
+          authTarget.role === 'elderly'
+            ? 'Patient'
+            : authTarget.role === 'caretaker'
+            ? 'Caregiver'
+            : 'Family Member';
+        setAuthTarget(null);
+        setAuthPin('');
         setActiveTab('overview');
         setStage('main');
-        showToast(`Caregiver session unlocked: ${caregiverTarget.name}`);
+        showToast(`Authenticated as ${authTarget.name} (${roleLabel})`);
         return;
+      } else {
+        const data = await res.json().catch(() => ({}));
+        if (data.error) {
+          setPinError(data.error);
+        }
       }
     } catch {
-      // Offline / Vercel fallback below
+      // Offline / fallback below
     } finally {
       setVerifyingPin(false);
     }
 
-    if (caregiverPin === caregiverTarget.passcode) {
-      setCurrentMemberId(caregiverTarget.id);
-      setCaregiverTarget(null);
-      setCaregiverPin('');
+    if (pinToVerify === authTarget.passcode || (!pinToVerify && authTarget.role === 'elderly')) {
+      setCurrentMemberId(authTarget.id);
+      const roleLabel =
+        authTarget.role === 'elderly'
+          ? 'Patient'
+          : authTarget.role === 'caretaker'
+          ? 'Caregiver'
+          : 'Family Member';
+      setAuthTarget(null);
+      setAuthPin('');
       setActiveTab('overview');
       setStage('main');
-      showToast(`Caregiver session unlocked: ${caregiverTarget.name}`);
+      showToast(`Authenticated as ${authTarget.name} (${roleLabel})`);
     } else {
-      setPinError('Invalid 4-digit Caregiver PIN.');
+      setPinError(`Invalid 4-digit PIN for ${authTarget.name}. Expected ${authTarget.passcode}`);
     }
   };
 
@@ -1017,12 +1019,11 @@ export default function App() {
             Who&apos;s using OJAS?
           </h1>
           <p className="mt-3 text-sm text-neutral-400">
-            One-tap entry for Patient &amp; Family · PIN required only for Caregiver Nurse
+            Shared Healthcare Ecosystem · Secure Passcode-Based Access for Elderly, Caretaker &amp; Family
           </p>
 
           <div className="mt-12 grid grid-cols-1 gap-8 sm:grid-cols-3 sm:gap-10">
             {db.members.map((member) => {
-              const isCaregiver = member.role === 'caretaker';
               const isRevoked =
                 member.status === 'revoked' || !member.consentGrantedByPatient;
               const roleBadge =
@@ -1040,7 +1041,7 @@ export default function App() {
                   onClick={() => handleSelectProfile(member)}
                   className="group flex flex-col items-center focus:outline-none disabled:opacity-40"
                 >
-                  <div className="relative h-36 w-36 overflow-hidden rounded-2xl border-2 border-transparent bg-neutral-900 transition-all duration-200 group-hover:scale-105 group-hover:border-white sm:h-44 sm:w-44">
+                  <div className="relative h-36 w-36 overflow-hidden rounded-2xl border-2 border-transparent bg-neutral-900 transition-all duration-200 group-hover:scale-105 group-hover:border-teal-400 sm:h-44 sm:w-44">
                     <img
                       src={
                         member.role === 'elderly'
@@ -1065,15 +1066,13 @@ export default function App() {
                       <span className="rounded bg-black/75 px-2 py-0.5 font-mono text-[11px] font-semibold tracking-wider text-white uppercase">
                         {roleBadge}
                       </span>
-                      {isCaregiver && (
-                        <span
-                          className="flex items-center gap-1 rounded bg-amber-500/90 px-2 py-0.5 font-mono text-[10px] font-bold text-black"
-                          title="PIN Required for Caregiver"
-                        >
-                          <Lock className="h-3 w-3" />
-                          PIN
-                        </span>
-                      )}
+                      <span
+                        className="flex items-center gap-1 rounded bg-teal-500/90 px-2 py-0.5 font-mono text-[10px] font-bold text-black"
+                        title={`Passcode: ${member.passcode}`}
+                      >
+                        <Lock className="h-3 w-3" />
+                        PIN: {member.passcode}
+                      </span>
                     </div>
                   </div>
 
@@ -1081,20 +1080,20 @@ export default function App() {
                     {member.name}
                   </span>
                   <span className="mt-0.5 text-xs text-neutral-500">
-                    {isCaregiver
-                      ? 'Clinical Caregiver (PIN: 2468)'
-                      : member.role === 'elderly'
-                      ? 'Patient · One-Tap Access'
-                      : 'Family · Read-Only Monitor'}
+                    {member.role === 'elderly'
+                      ? 'Patient (Passcode: 1234)'
+                      : member.role === 'caretaker'
+                      ? 'Caregiver Nurse (Passcode: 2468)'
+                      : 'Family Monitor (Passcode: 1357)'}
                   </span>
                 </button>
               );
             })}
           </div>
 
-          {/* Caregiver PIN Modal / Inline Overlay (Only shown when Caregiver tile is clicked) */}
+          {/* Secure Passcode Modal / Inline Overlay (Activates for all profiles) */}
           <AnimatePresence>
-            {caregiverTarget && (
+            {authTarget && (
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -1103,14 +1102,18 @@ export default function App() {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Lock className="h-4 w-4 text-amber-400" />
+                    <Lock className="h-4 w-4 text-teal-400" />
                     <span className="text-sm font-bold text-white">
-                      Caregiver Security PIN
+                      {authTarget.role === 'elderly'
+                        ? 'Patient Passcode Access'
+                        : authTarget.role === 'caretaker'
+                        ? 'Caregiver Security PIN'
+                        : 'Family Member Access PIN'}
                     </span>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setCaregiverTarget(null)}
+                    onClick={() => setAuthTarget(null)}
                     className="rounded p-1 text-neutral-400 hover:text-white"
                   >
                     <X className="h-4 w-4" />
@@ -1118,18 +1121,18 @@ export default function App() {
                 </div>
 
                 <p className="mt-1 text-xs text-neutral-400">
-                  Enter 4-digit PIN for {caregiverTarget.name} (Default:{' '}
-                  <span className="font-mono text-amber-300">2468</span>)
+                  Enter 4-digit passcode for {authTarget.name} (Default:{' '}
+                  <span className="font-mono text-teal-300 font-bold">{authTarget.passcode}</span>)
                 </p>
 
-                <form onSubmit={handleVerifyCaregiverPin} className="mt-4 space-y-3">
+                <form onSubmit={(e) => handleVerifyPasscode(e)} className="mt-4 space-y-3">
                   <input
                     type="password"
                     inputMode="numeric"
                     autoFocus
                     maxLength={4}
-                    value={caregiverPin}
-                    onChange={(e) => setCaregiverPin(e.target.value)}
+                    value={authPin}
+                    onChange={(e) => setAuthPin(e.target.value)}
                     placeholder="••••"
                     className="w-full rounded-xl border border-neutral-700 bg-black px-4 py-3 text-center font-mono text-2xl tracking-[0.5em] text-white focus:border-teal-500 focus:outline-none"
                   />
@@ -1141,17 +1144,29 @@ export default function App() {
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      onClick={() => setCaregiverPin('2468')}
-                      className="rounded-xl border border-neutral-700 px-3 py-2.5 font-mono text-xs text-neutral-300 hover:bg-neutral-800"
+                      onClick={() => {
+                        setAuthPin(authTarget.passcode);
+                        handleVerifyPasscode(undefined, authTarget.passcode);
+                      }}
+                      className="rounded-xl border border-neutral-700 bg-neutral-800/80 px-3 py-2.5 font-mono text-xs font-semibold text-teal-300 hover:bg-neutral-800"
                     >
-                      Fill 2468
+                      Fill {authTarget.passcode}
                     </button>
+                    {authTarget.role === 'elderly' && (
+                      <button
+                        type="button"
+                        onClick={() => handleVerifyPasscode(undefined, '')}
+                        className="rounded-xl border border-neutral-700 px-2.5 py-2.5 text-[11px] text-neutral-300 hover:bg-neutral-800"
+                      >
+                        One-Tap Assist
+                      </button>
+                    )}
                     <button
                       type="submit"
-                      disabled={verifyingPin || caregiverPin.length < 4}
+                      disabled={verifyingPin || authPin.length < 4}
                       className="flex-1 rounded-xl bg-teal-600 py-2.5 text-xs font-bold text-white hover:bg-teal-500 disabled:opacity-50"
                     >
-                      {verifyingPin ? 'Verifying...' : 'Unlock Caregiver Access'}
+                      {verifyingPin ? 'Verifying...' : 'Unlock Profile'}
                     </button>
                   </div>
                 </form>

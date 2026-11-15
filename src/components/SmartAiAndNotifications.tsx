@@ -471,6 +471,84 @@ export const SmartAiAndNotifications: React.FC<SmartAiAndNotificationsProps> = (
               </span>
             </label>
 
+            {/* Proactive Email Triggers & Simulation Panel */}
+            <div className="rounded-xl border border-teal-200 bg-teal-50/60 p-4 dark:border-teal-900/60 dark:bg-teal-950/20">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[11px] font-bold text-teal-800 uppercase tracking-wider dark:text-teal-300">
+                  Proactive Automated Dispatch Engine (Cron &amp; Event-Driven)
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  Active
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                OJAS continuously monitors medication intervals, missed doses, and upcoming clinical appointments, automatically dispatching proactive email alerts to family and caregivers.
+              </p>
+
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    onSendManualNotification({
+                      type: 'missed_dose',
+                      subject: '[URGENT ESCALATION] Missed Medication Dose: Telma 40mg — Smt. Kamala Deshmukh',
+                      body: `CRITICAL ALERT: Morning Telma 40mg (due 08:30 AM) was unacknowledged. Proactive notification escalated to Sister Priya Nair (+91 8778168629) & Rohan Deshmukh for immediate bedside check.`,
+                    })
+                  }
+                  className="flex items-center justify-between rounded-lg border border-red-300 bg-red-50/80 px-3 py-2 text-left text-xs font-semibold text-red-800 hover:bg-red-100 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+                >
+                  <span>Trigger Missed Dose Alert</span>
+                  <span className="text-[10px] font-mono opacity-75">Escalate</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    onSendManualNotification({
+                      type: 'upcoming_dose',
+                      subject: '[MEDICATION REMINDER] Upcoming Dose: Telma 40mg & Eliquis 5mg — Smt. Kamala Deshmukh',
+                      body: `Gentle reminder for Smt. Kamala Deshmukh: Morning medications Telma 40mg (post-breakfast) & Eliquis 5mg are due in 30 minutes with lukewarm water.`,
+                    })
+                  }
+                  className="flex items-center justify-between rounded-lg border border-teal-300 bg-teal-50/80 px-3 py-2 text-left text-xs font-semibold text-teal-800 hover:bg-teal-100 dark:border-teal-900 dark:bg-teal-950/40 dark:text-teal-300"
+                >
+                  <span>Trigger Upcoming Dose</span>
+                  <span className="text-[10px] font-mono opacity-75">30m Ahead</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    onSendManualNotification({
+                      type: 'appointment_reminder',
+                      subject: '[APPOINTMENT REMINDER] Cardiology Review with Dr. Rajesh Kulkarni — Tomorrow 10:30 AM',
+                      body: `Scheduled Clinical Visit: Smt. Kamala Deshmukh has an upcoming consultation with Dr. Rajesh Kulkarni at Sahyadri Super Speciality Hospital tomorrow at 10:30 AM. Primary escort: Rohan Deshmukh.`,
+                    })
+                  }
+                  className="flex items-center justify-between rounded-lg border border-blue-300 bg-blue-50/80 px-3 py-2 text-left text-xs font-semibold text-blue-800 hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300"
+                >
+                  <span>Trigger Doctor Appointment</span>
+                  <span className="text-[10px] font-mono opacity-75">24h Notice</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    onSendManualNotification({
+                      type: 'routine_reminder',
+                      subject: '[DAILY ROUTINE] Morning Blood Pressure & Vitals Assessment Reminder',
+                      body: `Healthcare Routine Reminder: Sister Priya Nair, please record morning BP, pulse and fasting blood sugar for Smt. Kamala Deshmukh before breakfast.`,
+                    })
+                  }
+                  className="flex items-center justify-between rounded-lg border border-purple-300 bg-purple-50/80 px-3 py-2 text-left text-xs font-semibold text-purple-800 hover:bg-purple-100 dark:border-purple-900 dark:bg-purple-950/40 dark:text-purple-300"
+                >
+                  <span>Trigger Routine Reminder</span>
+                  <span className="text-[10px] font-mono opacity-75">Daily Routine</span>
+                </button>
+              </div>
+            </div>
+
             <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
               {canConfigureNotificationPolicy && (
                 <button
@@ -480,21 +558,6 @@ export const SmartAiAndNotifications: React.FC<SmartAiAndNotificationsProps> = (
                   Save Notification Policy
                 </button>
               )}
-
-              <button
-                type="button"
-                onClick={() =>
-                  onSendManualNotification({
-                    type: 'upcoming_dose',
-                    subject:
-                      '[TEST DISPATCH] Automated OJAS India Medication & Escalation Verification',
-                    body: `Triggered by ${currentMember.name}: All email reminder & missed-dose escalation channels for Smt. Kamala Deshmukh are active.`,
-                  })
-                }
-                className="rounded-lg border border-slate-300 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300"
-              >
-                Send Test Email Dispatch
-              </button>
             </div>
           </div>
         </form>

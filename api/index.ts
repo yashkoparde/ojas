@@ -127,15 +127,12 @@ export default async function handler(req: any, res: any) {
     return sendJson(res, 200, memoryDb);
   }
 
-  // Route 2: POST /api/auth/verify-passcode
+  // Route 2: POST /api/auth/verify-passcode (Passcode-based access for Elderly, Caretaker & Family)
   if (method === 'POST' && path === '/api/auth/verify-passcode') {
     const { memberId, passcode } = body;
     const member = memoryDb.members?.find((m: any) => m.id === memberId);
     if (!member) {
       return sendJson(res, 404, { error: 'Care Circle member not found' });
-    }
-    if (member.role === 'elderly' || member.role === 'family') {
-      return sendJson(res, 200, { success: true, member });
     }
 
     const now = Date.now();
@@ -150,25 +147,35 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    if (member.passcode === passcode) {
-      pinAttemptStore.delete(rateKey);
+    // Verify passcode if provided
+    if (passcode) {
+      if (member.passcode === passcode) {
+        pinAttemptStore.delete(rateKey);
+        return sendJson(res, 200, { success: true, member });
+      }
+
+      rateInfo.attempts += 1;
+      if (rateInfo.attempts >= 5) {
+        rateInfo.lockedUntil = now + 60000; // 60s lockout
+        pinAttemptStore.set(rateKey, rateInfo);
+        return sendJson(res, 429, {
+          error: 'Too many failed attempts. Account temporarily locked for 60 seconds.',
+          locked: true,
+        });
+      }
+      pinAttemptStore.set(rateKey, rateInfo);
+      return sendJson(res, 401, {
+        error: `Invalid 4-digit PIN. (${5 - rateInfo.attempts} attempts remaining)`,
+        attemptsRemaining: 5 - rateInfo.attempts,
+      });
+    }
+
+    // Fallback: Elderly accessibility one-tap entry
+    if (member.role === 'elderly') {
       return sendJson(res, 200, { success: true, member });
     }
 
-    rateInfo.attempts += 1;
-    if (rateInfo.attempts >= 5) {
-      rateInfo.lockedUntil = now + 60000; // 60s lockout
-      pinAttemptStore.set(rateKey, rateInfo);
-      return sendJson(res, 429, {
-        error: 'Too many failed attempts. Account temporarily locked for 60 seconds.',
-        locked: true,
-      });
-    }
-    pinAttemptStore.set(rateKey, rateInfo);
-    return sendJson(res, 401, {
-      error: `Invalid 4-digit PIN. (${5 - rateInfo.attempts} attempts remaining)`,
-      attemptsRemaining: 5 - rateInfo.attempts,
-    });
+    return sendJson(res, 400, { error: 'Passcode is required for profile access.' });
   }
 
   // Route 3: POST /api/medications/:id/dose

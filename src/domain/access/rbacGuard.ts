@@ -84,11 +84,11 @@ export class RbacSecurityGuard {
   }
 
   /**
-   * Validates 4-digit PIN for role elevation.
+   * Validates 4-digit PIN for role-based profile authentication.
    */
   public static verifyPin(member: AuthorizedMember, enteredPin: string): boolean {
-    if (member.role === 'elderly' || member.role === 'family') {
-      // Patient and family do not require numeric PIN for basic interaction
+    if (!enteredPin && member.role === 'elderly') {
+      // Patient one-tap accessibility fallback
       return true;
     }
     return member.passcode === enteredPin;

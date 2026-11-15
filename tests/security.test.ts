@@ -121,4 +121,38 @@ describe('OJAS RBAC, Sovereignty & Security Architecture', () => {
 
     expect([401, 429]).toContain(lastRes.statusCode);
   });
+
+  it('validates passcode authentication across all 3 ecosystem personas (Elderly, Caretaker, Family)', async () => {
+    // 1. Patient passcode (1234)
+    const patientReq = {
+      method: 'POST',
+      url: '/api/auth/verify-passcode',
+      body: { memberId: 'mem-elderly-1', passcode: '1234' },
+    };
+    const patientRes = new MockResponse();
+    await handler(patientReq as any, patientRes as any);
+    expect(patientRes.statusCode).toBe(200);
+    expect(JSON.parse(patientRes.data).success).toBe(true);
+
+    // 2. Family passcode (1357)
+    const familyReq = {
+      method: 'POST',
+      url: '/api/auth/verify-passcode',
+      body: { memberId: 'mem-family-1', passcode: '1357' },
+    };
+    const familyRes = new MockResponse();
+    await handler(familyReq as any, familyRes as any);
+    expect(familyRes.statusCode).toBe(200);
+    expect(JSON.parse(familyRes.data).success).toBe(true);
+
+    // 3. Incorrect passcode rejects with 401
+    const invalidFamilyReq = {
+      method: 'POST',
+      url: '/api/auth/verify-passcode',
+      body: { memberId: 'mem-family-1', passcode: '9999' },
+    };
+    const invalidFamilyRes = new MockResponse();
+    await handler(invalidFamilyReq as any, invalidFamilyRes as any);
+    expect(invalidFamilyRes.statusCode).toBe(401);
+  });
 });

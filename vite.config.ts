@@ -36,5 +36,14 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
+    test: {
+      globals: true,
+      environment: 'node',
+      coverage: {
+        provider: 'v8',
+        reporter: ['text', 'json', 'html'],
+        include: ['src/domain/**', 'src/initialData.ts', 'api/**'],
+      },
+    },
   };
 });
