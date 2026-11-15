@@ -82,6 +82,7 @@ export interface MedicationDoseSlot {
   acknowledgedAt?: string;
   acknowledgedBy?: string;
   escalated?: boolean;
+  notes?: string;
 }
 
 export interface Medication {
@@ -175,6 +176,7 @@ export interface HardwareBoxState {
   buzzerActive: boolean;
   voicePromptActive: boolean;
   activeSlotLed: number | null;
+  doorOpen: boolean;
   lastPhysicalButtonPressAt?: string;
   lastScannedQrOrNfc?: string;
 }
