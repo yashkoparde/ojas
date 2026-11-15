@@ -319,7 +319,7 @@ async function startServer() {
       role: member.role || 'family',
       relationship: member.relationship || 'Family Member',
       email: member.email || 'family@ojas.in',
-      phone: member.phone || '+91 98200 00000',
+      phone: member.phone || '+91 8778168629',
       passcode: member.passcode || '4321',
       avatarUrl:
         member.avatarUrl ||
@@ -1060,7 +1060,7 @@ async function startServer() {
       actorName?: string;
     };
 
-    const targetPhone = recipientPhone || '+91 98201 99882 (Family Rohan Deshmukh)';
+    const targetPhone = recipientPhone || '+91 8778168629 (Family Rohan Deshmukh)';
     const formattedMsg = customText || `[OJAS UPDATE] Patient ${dbState.patient.fullName}: Routine status update confirmed by ${actorName || 'Caregiver Priya'}. All morning vitals normal.`;
 
     addActivityLog(

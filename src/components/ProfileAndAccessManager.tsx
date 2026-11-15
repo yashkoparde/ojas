@@ -136,7 +136,7 @@ export const ProfileAndAccessManager: React.FC<ProfileAndAccessManagerProps> = (
       relationship:
         inviteRelation || (inviteRole === 'caretaker' ? 'Home Care Nurse' : 'Family Member'),
       email: inviteEmail,
-      phone: invitePhone || '+91 98230 11220',
+      phone: invitePhone || '+91 8778168629',
       passcode: invitePasscode || '4321',
     });
     setInviteName('');

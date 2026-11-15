@@ -19,7 +19,7 @@ export const WhatsAppDispatchModal: React.FC<WhatsAppDispatchModalProps> = ({
   members,
   onSuccess,
 }) => {
-  const [targetPhone, setTargetPhone] = useState<string>('+91 98201 99882 (Son: Rohan Deshmukh)');
+  const [targetPhone, setTargetPhone] = useState<string>('+91 8778168629 (Son: Rohan Deshmukh)');
   const [templateType, setTemplateType] = useState<'routine_vitals' | 'dose_reminder' | 'sos' | 'refill_order'>('routine_vitals');
   const [messageText, setMessageText] = useState<string>(
     `[OJAS UPDATE] Smt. Kamala Deshmukh: Morning clinical checkup completed by Sister Priya Sharma, RN. Blood Pressure: 126/78 mmHg, Glucose: 112 mg/dL. Morning medicines confirmed taken.`
@@ -115,17 +115,17 @@ export const WhatsAppDispatchModal: React.FC<WhatsAppDispatchModalProps> = ({
               onChange={(e) => setTargetPhone(e.target.value)}
               className="w-full rounded-xl border border-slate-300 bg-white p-2.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
             >
-              <option value="+91 98201 99882 (Family Rohan Deshmukh)">
-                Rohan Deshmukh (Son / Primary Family) · +91 98201 99882
+              <option value="+91 8778168629 (Family Rohan Deshmukh)">
+                Rohan Deshmukh (Son / Primary Family) · +91 8778168629
               </option>
-              <option value="+91 98230 45120 (Caregiver Priya Sharma)">
-                Sister Priya Sharma, RN (Caretaker) · +91 98230 45120
+              <option value="+91 8778168629 (Caregiver Priya Sharma)">
+                Sister Priya Sharma, RN (Caretaker) · +91 8778168629
               </option>
-              <option value="+91 98220 11990 (Emergency Contact Dr. Amit)">
-                Dr. Rajesh Kulkarni (Primary Physician Desk) · +91 20 6721 3000
+              <option value="+91 8778168629 (Emergency Contact Dr. Amit)">
+                Dr. Rajesh Kulkarni (Primary Physician Desk) · +91 8778168629
               </option>
-              <option value="+91 99881 22334 (Pune Apollo Chemist)">
-                Wellness Forever Chemist (Prabhat Rd) · +91 99881 22334
+              <option value="+91 8778168629 (Pune Apollo Chemist)">
+                Wellness Forever Chemist (Prabhat Rd) · +91 8778168629
               </option>
             </select>
           </div>

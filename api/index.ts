@@ -756,7 +756,7 @@ User Request: ${userMessage || 'Analyze prescription image.'}`;
   // Route: POST /api/notifications/whatsapp-dispatch
   if (method === 'POST' && path === '/api/notifications/whatsapp-dispatch') {
     const { recipientPhone, recipientName, alertType, messageType, customMessage, customText, actorName } = body;
-    const targetPhone = recipientPhone || '+91 98201 11223';
+    const targetPhone = recipientPhone || '+91 8778168629';
     const formattedMsg = customMessage || customText || `[OJAS ALERT] Patient update for ${memoryDb.patient?.fullName || 'Smt. Kamala Deshmukh'}.`;
 
     return sendJson(res, 200, {

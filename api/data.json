@@ -9,14 +9,14 @@
     "weightKg": 61,
     "heightCm": 158,
     "address": "Flat 402, Shanti Niketan CHS, Prabhat Road, Deccan Gymkhana, Pune, Maharashtra 411004",
-    "phone": "+91 98230 45120",
+    "phone": "+91 8778168629",
     "email": "kamala.deshmukh@ojas.in",
     "avatarUrl": "https://raw.githubusercontent.com/yashkoparde/ojas/main/src/assets/images/patient.jpg",
     "primaryDoctor": {
       "name": "Dr. Rajesh Kulkarni, MD, DM (Cardiology)",
       "specialty": "Geriatric Cardiology & Internal Medicine",
       "hospital": "Sahyadri Super Speciality Hospital, Deccan Gymkhana, Pune",
-      "phone": "+91 20 6721 3000",
+      "phone": "+91 8778168629",
       "email": "dr.kulkarni@sahyadrihospitals.com"
     },
     "conditions": [
@@ -40,7 +40,7 @@
         "id": "ec-1",
         "name": "Rohan Deshmukh",
         "relationship": "Son (Primary Family Proxy - Kothrud, Pune)",
-        "phone": "+91 98201 11223",
+        "phone": "+91 8778168629",
         "email": "yashkoparde2022@gmail.com",
         "isPrimary": true
       },
@@ -48,7 +48,7 @@
         "id": "ec-2",
         "name": "Sister Priya Nair, RN",
         "relationship": "Lead Home Care Nurse (Day Shift)",
-        "phone": "+91 98231 67890",
+        "phone": "+91 8778168629",
         "email": "priya.nair.rn@ojas.in",
         "isPrimary": false
       }
@@ -82,7 +82,7 @@
       "role": "elderly",
       "relationship": "Patient (Self · Exclusive Consent & Access Authority)",
       "email": "kamala.deshmukh@ojas.in",
-      "phone": "+91 98230 45120",
+      "phone": "+91 8778168629",
       "passcode": "1234",
       "avatarUrl": "https://raw.githubusercontent.com/yashkoparde/ojas/main/src/assets/images/patient.jpg",
       "status": "active",
@@ -102,7 +102,7 @@
       "role": "caretaker",
       "relationship": "Primary Home Care Nurse (Clinical Execution)",
       "email": "priya.nair.rn@ojas.in",
-      "phone": "+91 98231 67890",
+      "phone": "+91 8778168629",
       "passcode": "2468",
       "avatarUrl": "https://raw.githubusercontent.com/yashkoparde/ojas/main/src/assets/images/caregiver.jpg",
       "status": "active",
@@ -122,7 +122,7 @@
       "role": "family",
       "relationship": "Son (Remote Monitoring & Appointment Booking)",
       "email": "yashkoparde2022@gmail.com",
-      "phone": "+91 98201 11223",
+      "phone": "+91 8778168629",
       "passcode": "1357",
       "avatarUrl": "https://raw.githubusercontent.com/yashkoparde/ojas/main/src/assets/images/familymember.jpg",
       "status": "active",

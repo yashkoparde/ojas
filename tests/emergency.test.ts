@@ -109,9 +109,9 @@ describe('OJAS Emergency Escalation & Physician Continuity Suite', () => {
 
   it('sanitizes telephone dialing URLs for native cellular integration', () => {
     const rawPhones = [
-      '+91 98230 45120',
-      '+91 20 6721 3000',
-      '+91 98201 11223',
+      '+91 8778168629',
+      '+91 8778168629',
+      '+91 8778168629',
     ];
 
     rawPhones.forEach((phone) => {
