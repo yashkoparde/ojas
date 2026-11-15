@@ -1020,6 +1020,152 @@ async function startServer() {
   });
 
   // Appointments CRUD
+  app.post('/api/appointments', (req: Request, res: Response) => {
+    const { actorName, actorRole, appointment } = req.body as {
+      actorName: string;
+      actorRole: ActivityLogEntry['actorRole'];
+      appointment: Partial<Appointment>;
+    };
+    const newApt: Appointment = {
+      id: `apt-${Date.now()}`,
+      doctorName: appointment.doctorName || dbState.patient.primaryDoctor.name,
+      specialty: appointment.specialty || dbState.patient.primaryDoctor.specialty,
+      hospitalLocation: appointment.hospitalLocation || dbState.patient.primaryDoctor.hospital,
+      roomOrDept: appointment.roomOrDept || 'Cardiology OPD Wing',
+      date: appointment.date || '2026-11-28',
+      time: appointment.time || '10:30',
+      status: 'upcoming',
+      assignedMemberId: appointment.assignedMemberId || 'mem-family-1',
+      reason: appointment.reason || 'Follow-up Consultation',
+      consultationNotes: appointment.consultationNotes || '',
+      followUpInstructions: appointment.followUpInstructions || '',
+      reminderSent: true,
+    };
+    dbState.appointments.unshift(newApt);
+    dispatchEmailNotification(
+      'appointment_reminder',
+      `[APPOINTMENT SCHEDULED] ${newApt.doctorName} on ${newApt.date} at ${newApt.time}`,
+      `New Appointment Confirmed for ${dbState.patient.fullName}: ${newApt.doctorName} (${newApt.specialty}) at ${newApt.hospitalLocation} on ${newApt.date} at ${newApt.time}. Reason: ${newApt.reason}.`
+    );
+    addActivityLog(
+      actorName || 'Rohan Deshmukh',
+      actorRole || 'family',
+      'Scheduled Doctor Appointment',
+      'appointment',
+      `Booked visit with ${newApt.doctorName} on ${newApt.date} at ${newApt.time}.`
+    );
+    saveAndBroadcast();
+    res.json(newApt);
+  });
+
+  app.put('/api/appointments/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { actorName, actorRole, updates } = req.body;
+    const idx = dbState.appointments.findIndex((a) => a.id === id);
+    if (idx === -1) {
+      res.status(404).json({ error: 'Appointment not found' });
+      return;
+    }
+    dbState.appointments[idx] = { ...dbState.appointments[idx], ...updates };
+    addActivityLog(
+      actorName || 'Sister Priya Nair, RN',
+      actorRole || 'caretaker',
+      'Updated Appointment / Consultation Notes',
+      'appointment',
+      `Updated appointment with ${dbState.appointments[idx].doctorName} (${dbState.appointments[idx].date}).`
+    );
+    saveAndBroadcast();
+    res.json(dbState.appointments[idx]);
+  });
+
+  // Daily Routine Checklist toggle
+  app.post('/api/routine/:id/toggle', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { actorName, actorRole, valueRecorded } = req.body;
+    if (actorRole === 'family') {
+      res.status(403).json({
+        error: 'Remote Family Member role has View-Only access to daily routine execution.',
+      });
+      return;
+    }
+    const item = dbState.dailyRoutine.find((r) => r.id === id);
+    if (!item) {
+      res.status(404).json({ error: 'Routine item not found' });
+      return;
+    }
+    item.completed = !item.completed;
+    if (item.completed) {
+      item.completedAt = new Date().toTimeString().slice(0, 5);
+      item.completedBy = actorName || 'Smt. Kamala Deshmukh';
+      if (valueRecorded) item.valueRecorded = valueRecorded;
+    } else {
+      item.completedAt = undefined;
+      item.completedBy = undefined;
+    }
+    addActivityLog(
+      actorName || 'Smt. Kamala Deshmukh',
+      actorRole || 'elderly',
+      `${item.completed ? 'Completed' : 'Unchecked'} Daily Health Routine`,
+      'profile',
+      `${item.title} (${item.time}) marked ${item.completed ? 'complete' : 'incomplete'}.`
+    );
+    saveAndBroadcast();
+    res.json(item);
+  });
+
+  // Caregiver Quick Vitals Logger (BP, Fasting/PP Blood Sugar, SpO2, Pulse/Temp)
+  app.post('/api/caregiver/vitals', (req: Request, res: Response) => {
+    const { actorName, actorRole, vitalType, readingValue, clinicalNote, notifyFamily } = req.body as {
+      actorName?: string;
+      actorRole?: ActivityLogEntry['actorRole'];
+      vitalType: string;
+      readingValue: string;
+      clinicalNote?: string;
+      notifyFamily?: boolean;
+    };
+
+    if (actorRole !== 'caretaker') {
+      res.status(403).json({
+        error: 'Only the PIN-authenticated Caregiver Nurse can log clinical vitals.',
+      });
+      return;
+    }
+
+    const nowTime = new Date().toTimeString().slice(0, 5);
+    const newRoutineItem = {
+      id: `rt-vital-${Date.now()}`,
+      time: nowTime,
+      title: `${vitalType}: ${readingValue}${clinicalNote ? ` (${clinicalNote})` : ''}`,
+      category: 'Vitals' as const,
+      completed: true,
+      completedAt: nowTime,
+      completedBy: actorName || 'Sister Priya Nair, RN',
+      valueRecorded: readingValue,
+    };
+
+    dbState.dailyRoutine.unshift(newRoutineItem);
+
+    addActivityLog(
+      actorName || 'Sister Priya Nair, RN',
+      'caretaker',
+      `Recorded Clinical Vital (${vitalType})`,
+      'profile',
+      `Logged ${vitalType} = ${readingValue}${clinicalNote ? ` — Note: ${clinicalNote}` : ''}.`
+    );
+
+    if (notifyFamily) {
+      dispatchEmailNotification(
+        'upcoming_dose',
+        `[OJAS CAREGIVER VITALS UPDATE] ${vitalType}: ${readingValue}`,
+        `Caregiver ${actorName || 'Sister Priya Nair, RN'} recorded a new vital reading for ${dbState.patient.fullName} at ${nowTime}:\n• ${vitalType}: ${readingValue}\n${clinicalNote ? `• Clinical Observation: ${clinicalNote}` : ''}`
+      );
+    }
+
+    saveAndBroadcast();
+    res.json({ success: true, item: newRoutineItem });
+  });
+
+  // Emergency SOS Trigger
   // Vite middleware for development or static serving for production
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
