@@ -795,6 +795,231 @@ async function startServer() {
   });
 
   // Medication CRUD + Dose Tracking (Elderly cannot modify clinical medication schedules; Family/Caretaker require patient consent + permissions)
+  app.post('/api/medications', (req: Request, res: Response) => {
+    const { actorName, actorRole, medication } = req.body as {
+      actorName: string;
+      actorRole: ActivityLogEntry['actorRole'];
+      medication: Partial<Medication>;
+    };
+    const actor = dbState.members.find((m) => m.role === actorRole);
+    if (actorRole === 'elderly') {
+      res.status(403).json({
+        error: 'Elderly users cannot add or modify clinical medication prescriptions.',
+      });
+      return;
+    }
+    if (!actor || !actor.consentGrantedByPatient || !actor.permissions.canAdd) {
+      res.status(403).json({
+        error: 'Read-only access: Patient authorization (canAdd) is required to add medications.',
+      });
+      return;
+    }
+    const newMed: Medication = {
+      id: `med-${Date.now()}`,
+      name: medication.name || 'Unnamed Medication',
+      genericName: medication.genericName || medication.name || '',
+      dosage: medication.dosage || '1 Tablet',
+      frequency: medication.frequency || 'Once Daily',
+      duration: medication.duration || '30 Days',
+      startDate: medication.startDate || '2026-11-14',
+      endDate: medication.endDate || '2026-12-14',
+      instructions: medication.instructions || 'Take with warm water as directed.',
+      purpose: medication.purpose || 'General Health',
+      prescribedBy: medication.prescribedBy || dbState.patient.primaryDoctor.name,
+      assignedCaretakerId: medication.assignedCaretakerId || 'mem-caretaker-1',
+      stockCount: Number(medication.stockCount ?? 30),
+      refillThreshold: Number(medication.refillThreshold ?? 7),
+      compartmentNumber: Number(medication.compartmentNumber ?? ((dbState.medications.length % 6) + 1)),
+      nfcTagId: medication.nfcTagId || `NFC-SLOT-${Date.now().toString().slice(-4)}`,
+      prescriptionImageUrl: medication.prescriptionImageUrl,
+      bottleOrStripImageUrl: medication.bottleOrStripImageUrl,
+      dailySchedule:
+        medication.dailySchedule && medication.dailySchedule.length > 0
+          ? medication.dailySchedule
+          : [
+              {
+                id: `slot-${Date.now()}-1`,
+                scheduledTime: '09:00',
+                label: 'Morning Dose',
+                status: 'pending',
+              },
+            ],
+    };
+    dbState.medications.push(newMed);
+    addActivityLog(
+      actorName || 'Sister Priya Nair, RN',
+      actorRole || 'caretaker',
+      'Added New Medication',
+      'medication',
+      `Added ${newMed.name} (${newMed.dosage}, ${newMed.frequency}) in Pillbox Compartment #${newMed.compartmentNumber}.`
+    );
+    saveAndBroadcast();
+    res.json(newMed);
+  });
+
+  app.put('/api/medications/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { actorName, actorRole, updates } = req.body;
+    const actor = dbState.members.find((m) => m.role === actorRole);
+    const isPhotoOnlyUpdate =
+      updates &&
+      Object.keys(updates).every(
+        (k) => k === 'bottleOrStripImageUrl' || k === 'prescriptionImageUrl'
+      );
+    if (actorRole === 'elderly' && !isPhotoOnlyUpdate) {
+      res.status(403).json({
+        error: 'Elderly users cannot modify clinical medication dosages or schedules.',
+      });
+      return;
+    }
+    if (!isPhotoOnlyUpdate && (!actor || !actor.consentGrantedByPatient || !actor.permissions.canEdit)) {
+      res.status(403).json({
+        error: 'Read-only access: Patient authorization (canEdit) is required to edit medication schedules.',
+      });
+      return;
+    }
+    const idx = dbState.medications.findIndex((m) => m.id === id);
+    if (idx === -1) {
+      res.status(404).json({ error: 'Medication not found' });
+      return;
+    }
+    dbState.medications[idx] = { ...dbState.medications[idx], ...updates };
+    addActivityLog(
+      actorName || 'Sister Priya Nair, RN',
+      actorRole || 'caretaker',
+      isPhotoOnlyUpdate ? 'Uploaded Medication Bottle/Strip Photo' : 'Updated Medication Details',
+      'medication',
+      isPhotoOnlyUpdate
+        ? `Uploaded visual identification photo (bottle/pill strip) for ${dbState.medications[idx].name}.`
+        : `Updated schedule or stock for ${dbState.medications[idx].name}.`
+    );
+    saveAndBroadcast();
+    res.json(dbState.medications[idx]);
+  });
+
+  app.delete('/api/medications/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { actorName, actorRole } = req.body || {};
+    const actor = dbState.members.find((m) => m.role === actorRole);
+    if (actorRole === 'elderly' || !actor || !actor.consentGrantedByPatient || !actor.permissions.canDelete) {
+      res.status(403).json({
+        error: 'Restricted action: Only an authorized member with Delete permission granted by the patient may remove clinical prescriptions.',
+      });
+      return;
+    }
+    const target = dbState.medications.find((m) => m.id === id);
+    if (!target) {
+      res.status(404).json({ error: 'Medication not found' });
+      return;
+    }
+    dbState.medications = dbState.medications.filter((m) => m.id !== id);
+    addActivityLog(
+      actorName || 'Sister Priya Nair, RN',
+      actorRole || 'caretaker',
+      'Removed Medication',
+      'medication',
+      `Removed ${target.name} (${target.dosage}) from active schedule.`
+    );
+    saveAndBroadcast();
+    res.json({ success: true });
+  });
+
+  // Update dose status (Taken / Missed / Skipped / Pending) - Restricted to Elderly & On-Site Caretaker
+  app.post('/api/medications/:id/dose', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { slotId, status, actorName, actorRole, source } = req.body as {
+      slotId: string;
+      status: 'pending' | 'taken' | 'missed' | 'skipped';
+      actorName: string;
+      actorRole: ActivityLogEntry['actorRole'];
+      source?: string;
+    };
+    if (actorRole === 'family') {
+      res.status(403).json({
+        error: 'Remote Family Member role cannot mark physical doses as taken. Only the Patient or on-site Caretaker Nurse can confirm physical intake.',
+      });
+      return;
+    }
+    const med = dbState.medications.find((m) => m.id === id);
+    if (!med) {
+      res.status(404).json({ error: 'Medication not found' });
+      return;
+    }
+    const slot = med.dailySchedule.find((s) => s.id === slotId);
+    if (!slot) {
+      res.status(404).json({ error: 'Schedule slot not found' });
+      return;
+    }
+
+    const prevStatus = slot.status;
+    slot.status = status;
+    const nowTime = new Date().toTimeString().slice(0, 5);
+
+    if (status === 'taken') {
+      slot.acknowledgedAt = nowTime;
+      slot.acknowledgedBy = actorName;
+      slot.escalated = false;
+      if (prevStatus !== 'taken' && med.stockCount > 0) {
+        med.stockCount -= 1;
+      }
+      if (dbState.hardware.activeSlotLed === med.compartmentNumber) {
+        dbState.hardware.activeSlotLed = null;
+        dbState.hardware.buzzerActive = false;
+        dbState.hardware.voicePromptActive = false;
+      }
+      if (med.stockCount <= med.refillThreshold && dbState.notificationSettings.lowStockEmailAlerts) {
+        dispatchEmailNotification(
+          'refill_alert',
+          `[LOW STOCK] ${med.name} (${med.dosage}) Down to ${med.stockCount} Doses`,
+          `Refill Reminder: ${dbState.patient.fullName}'s supply of ${med.name} (${med.dosage}) has ${med.stockCount} tablets remaining (Refill threshold: ${med.refillThreshold}). Prescribed by ${med.prescribedBy}.`
+        );
+      }
+    } else if (status === 'missed') {
+      slot.escalated = true;
+      if (dbState.notificationSettings.autoCaretakerEscalation) {
+        dispatchEmailNotification(
+          'escalation_alert',
+          `[ESCALATION] Missed Dose: ${med.name} (${med.dosage}) at ${slot.scheduledTime}`,
+          `Automated Caretaker & Family Alert: ${dbState.patient.fullName} missed the ${slot.scheduledTime} dose of ${med.name} (${med.dosage}). Please follow up immediately.`
+        );
+      }
+    }
+
+    addActivityLog(
+      actorName || 'Smt. Kamala Deshmukh',
+      actorRole || 'elderly',
+      `Marked Dose as ${status.toUpperCase()}`,
+      source === 'hardware' ? 'hardware' : 'medication',
+      `${med.name} (${med.dosage}) scheduled for ${slot.scheduledTime} marked as ${status} by ${actorName}${source ? ` via ${source}` : ''}.`
+    );
+
+    saveAndBroadcast();
+    res.json({ medication: med, slot });
+  });
+
+  // Refill medication stock
+  app.post('/api/medications/:id/refill', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { addedQuantity, actorName, actorRole } = req.body;
+    const med = dbState.medications.find((m) => m.id === id);
+    if (!med) {
+      res.status(404).json({ error: 'Medication not found' });
+      return;
+    }
+    const qty = Number(addedQuantity) || 30;
+    med.stockCount += qty;
+    addActivityLog(
+      actorName || 'Sister Priya Nair, RN',
+      actorRole || 'caretaker',
+      'Restocked Medication Supply',
+      'medication',
+      `Added +${qty} tablets to ${med.name}. Total stock is now ${med.stockCount}.`
+    );
+    saveAndBroadcast();
+    res.json(med);
+  });
+
+  // Appointments CRUD
   // Vite middleware for development or static serving for production
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
