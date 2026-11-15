@@ -19,10 +19,12 @@ try {
   };
 }
 
-async function parseBody(req: IncomingMessage): Promise<any> {
+async function parseBody(req: any): Promise<any> {
+  if (req.body) return req.body;
+  if (!req.on || typeof req.on !== 'function') return {};
   return new Promise((resolve) => {
     let body = '';
-    req.on('data', (chunk) => {
+    req.on('data', (chunk: any) => {
       body += chunk;
     });
     req.on('end', () => {
@@ -32,6 +34,7 @@ async function parseBody(req: IncomingMessage): Promise<any> {
         resolve({});
       }
     });
+    req.on('error', () => resolve({}));
   });
 }
 
@@ -61,7 +64,7 @@ export default async function handler(req: any, res: any) {
   const method = req.method?.toUpperCase() || 'GET';
 
   // Parse body if body exists or already parsed by Vercel
-  const body = req.body || (await parseBody(req));
+  const body = req.body || (['POST', 'PUT', 'PATCH'].includes(method) ? await parseBody(req) : {});
 
   // Route 1: GET /api/state
   if (method === 'GET' && (path === '/api/state' || path === '/api')) {

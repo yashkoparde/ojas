@@ -355,8 +355,11 @@ erDiagram
 
 5. **Execute Verification Checks**:
    ```bash
+   # Run automated test suite (17 clinical, RBAC, i18n, and API tests)
+   npm test
+
    # Verify TypeScript strict type compilation
-   npx tsc --noEmit
+   npm run lint
 
    # Execute production bundle build
    npm run build
