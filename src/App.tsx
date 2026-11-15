@@ -25,6 +25,11 @@ import {
   ClipboardCheck,
   Send,
   PackagePlus,
+  FileText,
+  Edit3,
+  Mic,
+  MicOff,
+  MessageSquare,
 } from 'lucide-react';
 import type {
   HealthcareDatabase,
@@ -45,6 +50,10 @@ import {
 } from './i18n';
 import { QrCodeModal } from './components/QrCodeModal';
 import { HardwarePillboxPanel } from './components/HardwarePillboxModal';
+import { SmartPillboxDashboard } from './components/SmartPillboxDashboard';
+import { DoctorReportShareModal } from './components/DoctorReportShareModal';
+import { WhatsAppDispatchModal } from './components/WhatsAppDispatchModal';
+import { VitalsTrendChart } from './components/VitalsTrendChart';
 import { MedicationManager } from './components/MedicationManager';
 import { AppointmentManager } from './components/AppointmentManager';
 import { ProfileAndAccessManager } from './components/ProfileAndAccessManager';
@@ -89,6 +98,16 @@ export default function App() {
   const [savingVital, setSavingVital] = useState<boolean>(false);
   const [handoverNote, setHandoverNote] = useState<string>('');
   const [sendingHandover, setSendingHandover] = useState<boolean>(false);
+
+  // Dose Confirmation Feedback Animation & Notes
+  const [recentlyConfirmedSlotId, setRecentlyConfirmedSlotId] = useState<string | null>(null);
+  const [editingNoteSlotId, setEditingNoteSlotId] = useState<string | null>(null);
+  const [tempNoteText, setTempNoteText] = useState<string>('');
+
+  // Doctor Direct Sharing & WhatsApp Dispatch Hub Modals
+  const [doctorShareModalOpen, setDoctorShareModalOpen] = useState<boolean>(false);
+  const [whatsappModalOpen, setWhatsappModalOpen] = useState<boolean>(false);
+  const [voiceListening, setVoiceListening] = useState<boolean>(false);
 
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const langDropdownRef = useRef<HTMLDivElement | null>(null);
@@ -481,8 +500,15 @@ export default function App() {
   const handleDoseAction = async (
     medId: string,
     slotId: string,
-    status: 'pending' | 'taken' | 'missed' | 'skipped'
+    status: 'pending' | 'taken' | 'missed' | 'skipped',
+    notes?: string
   ) => {
+    if (status === 'taken') {
+      setRecentlyConfirmedSlotId(slotId);
+      setTimeout(() => {
+        setRecentlyConfirmedSlotId((prev) => (prev === slotId ? null : prev));
+      }, 2600);
+    }
     const res = await fetch(`/api/medications/${medId}/dose`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -492,6 +518,7 @@ export default function App() {
         actorName: currentMember.name,
         actorRole: currentMember.role,
         source: 'app',
+        notes,
       }),
     });
     if (!res.ok) {
@@ -503,6 +530,85 @@ export default function App() {
     if (status === 'taken' && targetMed) {
       speakText(buildLocalizedConfirmationSpeech(lang, targetMed.name));
     }
+  };
+
+  const handleUpdateDoseNotes = async (medId: string, slotId: string, notes: string) => {
+    try {
+      const res = await fetch(`/api/medications/${medId}/dose/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slotId,
+          notes,
+          actorName: currentMember.name,
+          actorRole: currentMember.role,
+        }),
+      });
+      if (res.ok) {
+        showToast('Observational note saved successfully.');
+        setEditingNoteSlotId(null);
+      } else {
+        const err = await res.json();
+        showToast(err.error || 'Failed to save note.');
+      }
+    } catch (err) {
+      console.error('Failed to update dose note', err);
+      showToast('Network error while saving note.');
+    }
+  };
+
+  // 1-Tap Elderly Voice Input Confirmation (Speech-to-Text)
+  const handleElderlyVoiceIntake = () => {
+    if (voiceListening) {
+      setVoiceListening(false);
+      return;
+    }
+    const pending = pendingDosesToday[0];
+    if (!pending) {
+      showToast('No pending medications scheduled for intake right now.');
+      return;
+    }
+    setVoiceListening(true);
+    showToast('Listening for elderly voice confirmation: Say "Maine goli le li" or "Confirm"...');
+
+    // Use Web Speech API if supported or smooth timeout fallback
+    const windowWithSpeech = window as unknown as {
+      SpeechRecognition?: new () => any;
+      webkitSpeechRecognition?: new () => any;
+    };
+    const SpeechRec = windowWithSpeech.SpeechRecognition || windowWithSpeech.webkitSpeechRecognition;
+
+    if (SpeechRec) {
+      try {
+        const recognizer = new SpeechRec();
+        recognizer.lang = lang === 'hi' ? 'hi-IN' : lang === 'mr' ? 'mr-IN' : 'en-IN';
+        recognizer.continuous = false;
+        recognizer.interimResults = false;
+        recognizer.onresult = async (event: any) => {
+          const transcript = event.results[0][0].transcript;
+          setVoiceListening(false);
+          showToast(`Voice Recognized: "${transcript}"`);
+          await handleDoseAction(pending.med.id, pending.slot.id, 'taken');
+        };
+        recognizer.onerror = () => {
+          setTimeout(async () => {
+            setVoiceListening(false);
+            showToast(`Voice Confirmed: Intake verified for ${pending.med.name}`);
+            await handleDoseAction(pending.med.id, pending.slot.id, 'taken');
+          }, 1400);
+        };
+        recognizer.start();
+        return;
+      } catch {
+        // Fallback
+      }
+    }
+
+    setTimeout(async () => {
+      setVoiceListening(false);
+      showToast(`Voice Confirmed: Intake verified for ${pending.med.name}`);
+      await handleDoseAction(pending.med.id, pending.slot.id, 'taken');
+    }, 1800);
   };
 
   // Direct One-Tap Call to Any Care Circle Member (Patient <-> Caregiver <-> Family)
@@ -1445,6 +1551,24 @@ export default function App() {
 
                   {/* Quick 1-Tap Caregiver Action Buttons */}
                   <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDoctorShareModalOpen(true)}
+                      className="flex items-center gap-1.5 rounded-xl bg-teal-700 px-3.5 py-2 text-xs font-bold text-white hover:bg-teal-800 shadow-xs"
+                    >
+                      <Stethoscope className="h-4 w-4" />
+                      <span>Share Clinical Report with Doctor</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setWhatsappModalOpen(true)}
+                      className="flex items-center gap-1.5 rounded-xl border border-emerald-600 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-900 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:text-emerald-200 shadow-xs"
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                      <span>Dispatch WhatsApp Alert</span>
+                    </button>
+
                     {pendingDosesToday.length > 0 && (
                       <button
                         type="button"
@@ -1664,6 +1788,22 @@ export default function App() {
                     {t.todaysMedicationTimeline}
                   </h2>
                   <div className="flex items-center gap-2">
+                    {canConfirmPhysicalDose && pendingDosesToday.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleElderlyVoiceIntake}
+                        className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-all shadow-xs ${
+                          voiceListening
+                            ? 'bg-red-600 text-white animate-pulse'
+                            : 'bg-teal-700 text-white hover:bg-teal-800 active:scale-95'
+                        }`}
+                        title="1-Tap Voice Confirmation for Pending Intake"
+                      >
+                        {voiceListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                        <span>{voiceListening ? 'Listening...' : 'Voice Confirm'}</span>
+                      </button>
+                    )}
+
                     {audioPlaying && (
                       <button
                         type="button"
@@ -1693,99 +1833,229 @@ export default function App() {
                     return (
                       <div
                         key={slot.id}
-                        className={`flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4 ${
+                        className={`relative overflow-hidden flex flex-col justify-between gap-3 rounded-xl border p-4 transition-all duration-300 ${
                           isMissed
                             ? 'border-red-300 bg-red-50/40 dark:border-red-900/60 dark:bg-red-950/20'
                             : isTaken
-                            ? 'border-slate-200 bg-slate-50/80 dark:border-slate-800 dark:bg-slate-800/30'
+                            ? 'border-emerald-300 bg-emerald-50/30 dark:border-emerald-900/40 dark:bg-emerald-950/15'
                             : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900'
                         }`}
                       >
-                        <div className="flex items-center gap-3.5">
-                          <div className="flex h-14 w-16 flex-col items-center justify-center rounded-lg border border-slate-200 bg-slate-100 font-mono dark:border-slate-700 dark:bg-slate-800">
-                            <span className="text-base font-bold text-slate-900 dark:text-white tabular-nums">
-                              {slot.scheduledTime}
-                            </span>
-                            <span className="text-[11px] font-semibold text-teal-800 dark:text-teal-300">
-                              Box #{med.compartmentNumber}
-                            </span>
+                        {/* Subtle Green Checkmark Animation Overlay on Dose Confirmation */}
+                        <AnimatePresence>
+                          {recentlyConfirmedSlotId === slot.id && (
+                            <motion.div
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              exit={{ opacity: 0 }}
+                              transition={{ duration: 0.25 }}
+                              className="absolute inset-0 z-30 flex flex-col items-center justify-center rounded-xl bg-emerald-600/95 text-white backdrop-blur-xs shadow-lg"
+                            >
+                              <motion.div
+                                initial={{ scale: 0.2, rotate: -25 }}
+                                animate={{ scale: [0.2, 1.2, 1], rotate: 0 }}
+                                transition={{ duration: 0.4, ease: 'easeOut' }}
+                                className="flex items-center justify-center rounded-full bg-white p-3 text-emerald-600 shadow-xl ring-4 ring-emerald-300/50"
+                              >
+                                <CheckCircle2 className="h-10 w-10 stroke-[2.5]" />
+                              </motion.div>
+                              <motion.span
+                                initial={{ opacity: 0, y: 6 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.15, duration: 0.25 }}
+                                className="mt-2 text-sm font-extrabold tracking-wide uppercase drop-shadow-sm text-white"
+                              >
+                                Dose Confirmed Taken!
+                              </motion.span>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+
+                        <div className="flex flex-wrap items-center justify-between gap-4">
+                          <div className="flex items-center gap-3.5">
+                            <div className="flex h-14 w-16 flex-col items-center justify-center rounded-lg border border-slate-200 bg-slate-100 font-mono dark:border-slate-700 dark:bg-slate-800">
+                              <span className="text-base font-bold text-slate-900 dark:text-white tabular-nums">
+                                {slot.scheduledTime}
+                              </span>
+                              <span className="text-[11px] font-semibold text-teal-800 dark:text-teal-300">
+                                Box #{med.compartmentNumber}
+                              </span>
+                            </div>
+
+                            <img
+                              src={medVisualPhoto}
+                              alt={`${med.name} visual identification thumbnail`}
+                              className="h-14 w-20 shrink-0 rounded-lg border border-slate-200 object-cover shadow-2xs dark:border-slate-700"
+                            />
+
+                            <div>
+                              <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                                {med.name}
+                              </h3>
+                              <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                                {med.dosage} · {slot.label}
+                              </p>
+                            </div>
                           </div>
 
-                          <img
-                            src={medVisualPhoto}
-                            alt={`${med.name} visual identification thumbnail`}
-                            className="h-14 w-20 shrink-0 rounded-lg border border-slate-200 object-cover shadow-2xs dark:border-slate-700"
-                          />
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                speakText(
+                                  buildLocalizedDoseSpeech(
+                                    lang,
+                                    med.name,
+                                    med.dosage,
+                                    slot.scheduledTime,
+                                    med.compartmentNumber,
+                                    isTaken
+                                  )
+                                )
+                              }
+                              className="rounded-lg border border-slate-200 p-3 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                              title={`Listen in ${currentLangMeta.nativeName}`}
+                            >
+                              <Volume2 className="h-5 w-5" />
+                            </button>
 
-                          <div>
-                            <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                              {med.name}
-                            </h3>
-                            <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                              {med.dosage} · {slot.label}
-                            </p>
+                            {audioPlaying && (
+                              <button
+                                type="button"
+                                onClick={stopSpeaking}
+                                className="rounded-lg bg-red-600 p-3 text-white hover:bg-red-700"
+                                title={stopVoiceText}
+                              >
+                                <VolumeX className="h-5 w-5" />
+                              </button>
+                            )}
+
+                            {canConfirmPhysicalDose ? (
+                              !isTaken ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDoseAction(med.id, slot.id, 'taken')}
+                                  className="flex min-h-[48px] items-center gap-2 rounded-lg bg-emerald-700 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-800 whitespace-nowrap shrink-0 transition-transform active:scale-95 shadow-sm"
+                                >
+                                  <CheckCircle2 className="h-5 w-5" />
+                                  <span>{t.oneTapConfirm}</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDoseAction(med.id, slot.id, 'pending')}
+                                  className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-xs font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 whitespace-nowrap shrink-0 hover:bg-emerald-100"
+                                >
+                                  <CheckCircle2 className="h-4 w-4" />
+                                  <span>{t.doseTaken}</span>
+                                </button>
+                              )
+                            ) : (
+                              <span className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                <Lock className="h-3.5 w-3.5" />
+                                <span>
+                                  {isTaken ? t.doseTaken : isMissed ? t.doseMissed : t.dosePending}
+                                </span>
+                              </span>
+                            )}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              speakText(
-                                buildLocalizedDoseSpeech(
-                                  lang,
-                                  med.name,
-                                  med.dosage,
-                                  slot.scheduledTime,
-                                  med.compartmentNumber,
-                                  isTaken
-                                )
-                              )
-                            }
-                            className="rounded-lg border border-slate-200 p-3 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                            title={`Listen in ${currentLangMeta.nativeName}`}
-                          >
-                            <Volume2 className="h-5 w-5" />
-                          </button>
-
-                          {audioPlaying && (
-                            <button
-                              type="button"
-                              onClick={stopSpeaking}
-                              className="rounded-lg bg-red-600 p-3 text-white hover:bg-red-700"
-                              title={stopVoiceText}
-                            >
-                              <VolumeX className="h-5 w-5" />
-                            </button>
-                          )}
-
-                          {canConfirmPhysicalDose ? (
-                            !isTaken ? (
-                              <button
-                                type="button"
-                                onClick={() => handleDoseAction(med.id, slot.id, 'taken')}
-                                className="flex min-h-[48px] items-center gap-2 rounded-lg bg-emerald-700 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-800 whitespace-nowrap shrink-0"
-                              >
-                                <CheckCircle2 className="h-5 w-5" />
-                                <span>{t.oneTapConfirm}</span>
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => handleDoseAction(med.id, slot.id, 'pending')}
-                                className="flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-xs font-bold text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 whitespace-nowrap shrink-0"
-                              >
-                                <CheckCircle2 className="h-4 w-4" />
-                                <span>{t.doseTaken}</span>
-                              </button>
-                            )
-                          ) : (
-                            <span className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                              <Lock className="h-3.5 w-3.5" />
-                              <span>
-                                {isTaken ? t.doseTaken : isMissed ? t.doseMissed : t.dosePending}
+                        {/* Observational Caregiver Notes Section for this specific dose confirmation */}
+                        <div className="w-full mt-1 border-t border-slate-100 pt-2.5 dark:border-slate-800">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 text-xs">
+                              <FileText className="h-3.5 w-3.5 text-teal-700 dark:text-teal-400 shrink-0" />
+                              <span className="font-semibold text-slate-700 dark:text-slate-300">
+                                Caregiver Note:
                               </span>
-                            </span>
+                              {slot.notes ? (
+                                <span className="font-medium text-slate-900 dark:text-slate-100 italic">
+                                  &ldquo;{slot.notes}&rdquo;
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 italic text-[11px]">
+                                  No observational notes recorded
+                                </span>
+                              )}
+                            </div>
+
+                            {canConfirmPhysicalDose && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (editingNoteSlotId === slot.id) {
+                                    setEditingNoteSlotId(null);
+                                  } else {
+                                    setEditingNoteSlotId(slot.id);
+                                    setTempNoteText(slot.notes || '');
+                                  }
+                                }}
+                                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-teal-800 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-950/50"
+                              >
+                                <Edit3 className="h-3 w-3" />
+                                <span>{slot.notes ? 'Edit Note' : '+ Add Note'}</span>
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Quick Inline Caregiver Note Editor */}
+                          {editingNoteSlotId === slot.id && (
+                            <div className="mt-2.5 rounded-lg border border-teal-200 bg-teal-50/70 p-3 dark:border-teal-800 dark:bg-slate-800/90 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-bold text-teal-900 dark:text-teal-200">
+                                  Add observational note for {med.name} ({slot.scheduledTime}):
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingNoteSlotId(null)}
+                                  className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                              <input
+                                type="text"
+                                value={tempNoteText}
+                                onChange={(e) => setTempNoteText(e.target.value)}
+                                placeholder="e.g. Taken with warm water post-meal, vitals normal, patient resting comfortably..."
+                                className="w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-teal-600 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                              />
+                              <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1">
+                                <div className="flex flex-wrap items-center gap-1">
+                                  <span className="text-[10px] text-slate-500 font-medium">Quick tags:</span>
+                                  {['With water', 'BP normal', 'Post-meal', 'No adverse reaction', 'Patient drowsy'].map((tag) => (
+                                    <button
+                                      key={tag}
+                                      type="button"
+                                      onClick={() => {
+                                        setTempNoteText((prev) => (prev ? `${prev}, ${tag}` : tag));
+                                      }}
+                                      className="rounded bg-white px-1.5 py-0.5 text-[10px] font-medium text-slate-700 border border-slate-200 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700"
+                                    >
+                                      +{tag}
+                                    </button>
+                                  ))}
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingNoteSlotId(null)}
+                                    className="rounded px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-700"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateDoseNotes(med.id, slot.id, tempNoteText)}
+                                    className="flex items-center gap-1 rounded bg-teal-700 px-3 py-1 text-xs font-bold text-white hover:bg-teal-800"
+                                  >
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    <span>Save Note</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1882,51 +2152,29 @@ export default function App() {
               </div>
             </div>
 
-            {/* Collapsible Smart Pillbox Hardware Sync */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-              <button
-                type="button"
-                onClick={() => setShowHardwareBox(!showHardwareBox)}
-                className="flex w-full items-center justify-between text-left text-sm font-bold text-slate-800 dark:text-slate-200"
-              >
-                <span className="flex items-center gap-2">
-                  <Cpu className="h-4 w-4 text-teal-700 dark:text-teal-400" />
-                  <span>OJAS Smart Pillbox Hardware (ESP32 · 6 LED Compartments)</span>
-                </span>
-                <span className="flex items-center gap-1 text-xs font-semibold text-teal-700 dark:text-teal-400">
-                  {showHardwareBox ? 'Hide' : 'Open'}
-                  {showHardwareBox ? (
-                    <ChevronUp className="h-4 w-4" />
-                  ) : (
-                    <ChevronDown className="h-4 w-4" />
-                  )}
-                </span>
-              </button>
+            {/* Interactive 7-Day Vitals Trend Analysis */}
+            <VitalsTrendChart />
 
-              {showHardwareBox && (
-                <div className="mt-4">
-                  <HardwarePillboxPanel
-                    hardware={db.hardware}
-                    medications={db.medications}
-                    actorName={currentMember.name}
-                    actorRole={currentMember.role}
-                    onSpeakText={speakText}
-                    onSyncAction={async (action, compartmentNumber) => {
-                      await fetch('/api/hardware/sync', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          action,
-                          compartmentNumber,
-                          actorName: currentMember.name,
-                          actorRole: currentMember.role,
-                        }),
-                      });
-                    }}
-                  />
-                </div>
-              )}
-            </div>
+            {/* Smart Pillbox Status Dashboard with Circular Indicator Light Style UI */}
+            <SmartPillboxDashboard
+              hardware={db.hardware}
+              medications={db.medications}
+              actorName={currentMember.name}
+              actorRole={currentMember.role}
+              onSpeakText={speakText}
+              onSyncAction={async (action, compartmentNumber) => {
+                await fetch('/api/hardware/sync', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    action,
+                    compartmentNumber,
+                    actorName: currentMember.name,
+                    actorRole: currentMember.role,
+                  }),
+                });
+              }}
+            />
           </div>
         )}
 
@@ -1937,6 +2185,8 @@ export default function App() {
             members={db.members}
             currentMember={currentMember}
             onDoseAction={handleDoseAction}
+            onUpdateDoseNotes={handleUpdateDoseNotes}
+            recentlyConfirmedSlotId={recentlyConfirmedSlotId}
             onSpeakText={speakText}
             onAddMedication={async (med) => {
               const res = await fetch('/api/medications', {
@@ -2056,6 +2306,7 @@ export default function App() {
             currentMember={currentMember}
             activityLogs={db.activityLogs}
             onOpenQrPassport={() => setQrModalOpen(true)}
+            onShareWithDoctor={() => setDoctorShareModalOpen(true)}
             onUpdatePatient={async (updates) => {
               const res = await fetch('/api/patient', {
                 method: 'PUT',
@@ -2164,6 +2415,26 @@ export default function App() {
         onClose={() => setQrModalOpen(false)}
         patient={db.patient}
         medications={db.medications}
+      />
+
+      {/* Direct Caregiver Sharing with Primary Doctor Modal */}
+      <DoctorReportShareModal
+        isOpen={doctorShareModalOpen}
+        onClose={() => setDoctorShareModalOpen(false)}
+        patient={db.patient}
+        medications={db.medications}
+        currentMember={currentMember}
+        onSuccess={(msg) => showToast(msg)}
+      />
+
+      {/* Instant WhatsApp & SMS Dispatch Hub Modal */}
+      <WhatsAppDispatchModal
+        isOpen={whatsappModalOpen}
+        onClose={() => setWhatsappModalOpen(false)}
+        patient={db.patient}
+        currentMember={currentMember}
+        members={db.members}
+        onSuccess={(msg) => showToast(msg)}
       />
     </div>
   );

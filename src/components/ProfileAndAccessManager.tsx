@@ -31,6 +31,7 @@ interface ProfileAndAccessManagerProps {
   onInviteMember: (member: Partial<AuthorizedMember>) => Promise<void>;
   onUpdateMember: (id: string, updates: Partial<AuthorizedMember>) => Promise<void>;
   onOpenQrPassport: () => void;
+  onShareWithDoctor?: () => void;
 }
 
 export const ProfileAndAccessManager: React.FC<ProfileAndAccessManagerProps> = ({
@@ -43,6 +44,7 @@ export const ProfileAndAccessManager: React.FC<ProfileAndAccessManagerProps> = (
   onInviteMember,
   onUpdateMember,
   onOpenQrPassport,
+  onShareWithDoctor,
 }) => {
   const [editingProfile, setEditingProfile] = useState(false);
   const [conditionsInput, setConditionsInput] = useState(patient.conditions.join(', '));
@@ -349,6 +351,15 @@ export const ProfileAndAccessManager: React.FC<ProfileAndAccessManagerProps> = (
                   {patient.primaryDoctor.specialty} · {patient.primaryDoctor.hospital}
                 </div>
                 <div className="font-mono">{patient.primaryDoctor.phone}</div>
+                {onShareWithDoctor && (
+                  <button
+                    type="button"
+                    onClick={onShareWithDoctor}
+                    className="mt-2 inline-flex items-center gap-1 rounded-md bg-teal-50 px-2.5 py-1 text-xs font-bold text-teal-800 hover:bg-teal-100 dark:bg-teal-950/60 dark:text-teal-300 border border-teal-200 dark:border-teal-800"
+                  >
+                    <span>Share Report with Doctor&apos;s Office &rarr;</span>
+                  </button>
+                )}
               </div>
               <div className="mt-3 space-y-1 border-t border-slate-100 pt-2 text-xs dark:border-slate-800">
                 {patient.emergencyContacts.map((ec) => (
