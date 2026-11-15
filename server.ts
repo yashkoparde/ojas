@@ -1331,6 +1331,326 @@ async function startServer() {
   // ============================================================================
 
   // 1. Medicine Interaction, Allergy & Duplicate Therapy Checker
+  app.post('/api/ai/interaction-check', async (req: Request, res: Response) => {
+    try {
+      const { candidateMedication } = req.body as { candidateMedication?: string };
+      const ai = getGeminiClient();
+
+      const medSummary = dbState.medications
+        .map((m) => `- ${m.name} (${m.genericName}), ${m.dosage}, ${m.frequency} for ${m.purpose}`)
+        .join('\n');
+
+      const prompt = `Analyze the following Indian elderly patient's active medication regimen, allergies, and health conditions for drug-drug interactions, duplicate therapy warnings, and allergy/condition contraindications.
+Patient: ${dbState.patient.fullName}, Age ${dbState.patient.age} (Pune, India)
+Conditions: ${dbState.patient.conditions.join(', ')}
+Allergies: ${dbState.patient.allergies.join(', ')}
+Restrictions: ${dbState.patient.medicationRestrictions.join('; ')}
+Active Medications:
+${medSummary}
+${candidateMedication ? `\nCandidate New Medication to Check: ${candidateMedication}` : ''}
+
+Return a clinical yet easy-to-understand JSON array of warnings/observations.`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: prompt,
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                severity: {
+                  type: Type.STRING,
+                  description: 'high, moderate, or low',
+                },
+                title: {
+                  type: Type.STRING,
+                  description: 'Concise warning title',
+                },
+                medicationsInvolved: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                explanation: {
+                  type: Type.STRING,
+                  description: 'Clear clinical explanation for patient and caretaker',
+                },
+                recommendation: {
+                  type: Type.STRING,
+                  description: 'Actionable safety recommendation',
+                },
+              },
+              required: ['severity', 'title', 'medicationsInvolved', 'explanation', 'recommendation'],
+            },
+          },
+        },
+      });
+
+      const parsed = JSON.parse((response.text ?? '[]').trim());
+      res.json({ warnings: parsed });
+    } catch (error) {
+      console.error('Gemini interaction-check error:', error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Failed to run AI interaction check.',
+      });
+    }
+  });
+
+  // 2. AI Weekly Health & Adherence Summary Generator
+  app.post('/api/ai/weekly-summary', async (_req: Request, res: Response) => {
+    try {
+      const ai = getGeminiClient();
+      const totalSlots = dbState.medications.reduce((acc, m) => acc + m.dailySchedule.length, 0);
+      const takenSlots = dbState.medications.reduce(
+        (acc, m) => acc + m.dailySchedule.filter((s) => s.status === 'taken').length,
+        0
+      );
+      const missedSlots = dbState.medications.reduce(
+        (acc, m) => acc + m.dailySchedule.filter((s) => s.status === 'missed').length,
+        0
+      );
+
+      const prompt = `Generate a structured weekly healthcare & adherence summary for Indian elderly patient ${dbState.patient.fullName} (Age ${dbState.patient.age}, Pune) to be shared with her son (Rohan Deshmukh) and caretaker nurse (Sister Priya Nair, RN).
+Current Today Snapshot: ${takenSlots}/${totalSlots} doses taken, ${missedSlots} missed.
+Medications: ${dbState.medications.map((m) => `${m.name} ${m.dosage} (Stock: ${m.stockCount})`).join(', ')}
+Routine Vitals Today: ${dbState.dailyRoutine.map((r) => `${r.title}: ${r.completed ? r.valueRecorded || 'Completed' : 'Pending'}`).join('; ')}
+Upcoming Appointments: ${dbState.appointments.filter((a) => a.status === 'upcoming').map((a) => `${a.doctorName} on ${a.date}`).join(', ')}
+
+Provide a warm, medically grounded summary in JSON format.`;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: prompt,
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              headline: { type: Type.STRING },
+              adherenceAssessment: { type: Type.STRING },
+              vitalsAndRoutineHighlights: { type: Type.STRING },
+              attentionItems: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              caretakerNextSteps: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+            },
+            required: [
+              'headline',
+              'adherenceAssessment',
+              'vitalsAndRoutineHighlights',
+              'attentionItems',
+              'caretakerNextSteps',
+            ],
+          },
+        },
+      });
+
+      const summary = JSON.parse((response.text ?? '{}').trim());
+      res.json(summary);
+    } catch (error) {
+      console.error('Gemini weekly-summary error:', error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Failed to generate AI weekly summary.',
+      });
+    }
+  });
+
+  // 3. AI Medication Schedule Assistant & Prescription Scanner
+  app.post('/api/ai/schedule-assistant', async (req: Request, res: Response) => {
+    try {
+      const { userMessage, imageBase64, imageMimeType } = req.body as {
+        userMessage: string;
+        imageBase64?: string;
+        imageMimeType?: string;
+      };
+      const ai = getGeminiClient();
+
+      const contextText = `You are the CareBridge India AI Medication Schedule Assistant supporting elderly patient ${dbState.patient.fullName} (Age ${dbState.patient.age}, Pune), her nurse caretaker Sister Priya Nair, and her son Rohan Deshmukh.
+Patient Conditions: ${dbState.patient.conditions.join(', ')}
+Allergies: ${dbState.patient.allergies.join(', ')}
+Restrictions: ${dbState.patient.medicationRestrictions.join('; ')}
+Current Medications: ${dbState.medications.map((m) => `${m.name} ${m.dosage} (${m.frequency} at ${m.dailySchedule.map((s) => s.scheduledTime).join(', ')})`).join('; ')}
+
+User Request: ${userMessage || 'Analyze this prescription image and suggest a safe daily schedule around Indian meal timings (Morning Nashta, Afternoon Lunch, Night Dinner).'}
+
+Respond with helpful, empathetic, large-print-friendly advice AND if a medication is being scheduled or extracted from a prescription, include structured suggestedMedication details.`;
+
+      const parts: any[] = [];
+      if (imageBase64 && imageMimeType) {
+        parts.push({
+          inlineData: {
+            mimeType: imageMimeType,
+            data: imageBase64,
+          },
+        });
+      }
+      parts.push({ text: contextText });
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: { parts },
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              spokenReply: {
+                type: Type.STRING,
+                description: 'Clear, comforting response suitable for reading aloud to an Indian elderly patient.',
+              },
+              clinicalNotes: {
+                type: Type.STRING,
+                description: 'Timing rationale, Indian meal pairing advice, and interaction notes.',
+              },
+              hasSuggestedMedication: {
+                type: Type.BOOLEAN,
+              },
+              suggestedMedication: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  dosage: { type: Type.STRING },
+                  frequency: { type: Type.STRING },
+                  duration: { type: Type.STRING },
+                  instructions: { type: Type.STRING },
+                  purpose: { type: Type.STRING },
+                  scheduledTimes: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                  },
+                },
+                required: ['name', 'dosage', 'frequency', 'duration', 'instructions', 'purpose', 'scheduledTimes'],
+              },
+            },
+            required: ['spokenReply', 'clinicalNotes', 'hasSuggestedMedication'],
+          },
+        },
+      });
+
+      const result = JSON.parse((response.text ?? '{}').trim());
+      res.json(result);
+    } catch (error) {
+      console.error('Gemini schedule-assistant error:', error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'AI Schedule Assistant encountered an error.',
+      });
+    }
+  });
+
+  // 4. Multilingual Indian Speech Synthesis Endpoint (Supports mr, ta, kn, bn, hi, ml, te, gu, pa, en)
+  app.post('/api/ai/tts', async (req: Request, res: Response) => {
+    try {
+      const { text, languageName, speechLang, langCode } = req.body as {
+        text: string;
+        languageName?: string;
+        speechLang?: string;
+        langCode?: string;
+      };
+      if (!text || !text.trim()) {
+        res.status(400).json({ error: 'Text is required for speech synthesis.' });
+        return;
+      }
+
+      const tlCode = (
+        langCode ||
+        (speechLang ? speechLang.split('-')[0] : 'en')
+      ).toLowerCase();
+
+      let spokenText = text.trim();
+
+      // If a non-English Indian language is selected (e.g. Marathi, Tamil, Kannada, Bengali)
+      // and the caller passed an English-only string, translate it into native script first.
+      if (tlCode !== 'en' && !/[^\u0000-\u007F]/.test(spokenText)) {
+        try {
+          const ai = getGeminiClient();
+          const trResp = await ai.models.generateContent({
+            model: 'gemini-4-hydrogen',
+            contents: `Translate the following healthcare instruction for an elderly Indian patient into natural spoken ${
+              languageName || tlCode
+            } written strictly in its native Indian script (transliterate medicine brand names into native script as well, and output ONLY the translated sentence with no quotes): ${spokenText}`,
+            config: {
+              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            },
+          });
+          if (trResp.text && trResp.text.trim()) {
+            spokenText = trResp.text.trim();
+          }
+        } catch {
+          // Continue with original text if translation is unavailable
+        }
+      }
+
+      // Split text into <= 140 character sentence chunks so regional TTS never truncates or returns 400
+      const rawSentences = spokenText.split(/(?<=[।.!?;\n])\s+/);
+      const chunks: string[] = [];
+      const maxLen = 140;
+      for (const sentence of rawSentences) {
+        if (sentence.length <= maxLen) {
+          if (sentence.trim()) chunks.push(sentence.trim());
+        } else {
+          const words = sentence.split(/\s+/);
+          let current = '';
+          for (const word of words) {
+            if ((current + ' ' + word).trim().length <= maxLen) {
+              current = (current + ' ' + word).trim();
+            } else {
+              if (current) chunks.push(current);
+              current = word;
+            }
+          }
+          if (current) chunks.push(current);
+        }
+      }
+
+      const audioBuffers: Buffer[] = [];
+      for (const chunk of chunks.filter(Boolean)) {
+        const ttsUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(
+          chunk
+        )}&tl=${encodeURIComponent(tlCode)}&client=gtx`;
+        const ttsRes = await fetch(ttsUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0',
+          },
+        });
+        if (ttsRes.ok) {
+          const arrBuf = await ttsRes.arrayBuffer();
+          if (arrBuf.byteLength > 0) {
+            audioBuffers.push(Buffer.from(arrBuf));
+          }
+        }
+      }
+
+      if (audioBuffers.length > 0) {
+        const combinedMp3 = Buffer.concat(audioBuffers).toString('base64');
+        res.json({
+          audioBase64: combinedMp3,
+          audioWavBase64: combinedMp3,
+          mimeType: 'audio/mpeg',
+          spokenText,
+        });
+        return;
+      }
+
+      res.status(200).json({ audioBase64: null, audioWavBase64: null, fallback: true });
+    } catch (error) {
+      res.status(200).json({
+        audioBase64: null,
+        audioWavBase64: null,
+        fallback: true,
+        reason: error instanceof Error ? error.message : 'TTS fallback active',
+      });
+    }
+  });
+
   // Vite middleware for development or static serving for production
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
