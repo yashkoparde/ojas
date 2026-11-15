@@ -13,7 +13,7 @@ export const INITIAL_DB: HealthcareDatabase = {
     address: 'Flat 402, Shanti Niketan CHS, Prabhat Road, Deccan Gymkhana, Pune, Maharashtra 411004',
     phone: '+91 98230 45120',
     email: 'kamala.deshmukh@ojas.in',
-    avatarUrl: '/src/assets/images/avatar_patient_kamala_1794718340266.jpg',
+    avatarUrl: 'https://raw.githubusercontent.com/yashkoparde/ojas/main/src/assets/images/patient.jpg',
     primaryDoctor: {
       name: 'Dr. Rajesh Kulkarni, MD, DM (Cardiology)',
       specialty: 'Geriatric Cardiology & Internal Medicine',
@@ -87,7 +87,7 @@ export const INITIAL_DB: HealthcareDatabase = {
       email: 'kamala.deshmukh@ojas.in',
       phone: '+91 98230 45120',
       passcode: '1234',
-      avatarUrl: '/src/assets/images/avatar_patient_kamala_1794718340266.jpg',
+      avatarUrl: 'https://raw.githubusercontent.com/yashkoparde/ojas/main/src/assets/images/patient.jpg',
       status: 'active',
       consentGrantedByPatient: true,
       permissions: {
@@ -107,7 +107,7 @@ export const INITIAL_DB: HealthcareDatabase = {
       email: 'priya.nair.rn@ojas.in',
       phone: '+91 98231 67890',
       passcode: '2468',
-      avatarUrl: '/src/assets/images/avatar_caretaker_priya_1794718340849.jpg',
+      avatarUrl: 'https://raw.githubusercontent.com/yashkoparde/ojas/main/src/assets/images/caregiver.jpg',
       status: 'active',
       consentGrantedByPatient: true,
       permissions: {
@@ -127,7 +127,7 @@ export const INITIAL_DB: HealthcareDatabase = {
       email: 'yashkoparde2022@gmail.com',
       phone: '+91 98201 11223',
       passcode: '1357',
-      avatarUrl: '/src/assets/images/avatar_family_rohan_1794718340820.jpg',
+      avatarUrl: 'https://raw.githubusercontent.com/yashkoparde/ojas/main/src/assets/images/familymember.jpg',
       status: 'active',
       consentGrantedByPatient: true,
       permissions: {

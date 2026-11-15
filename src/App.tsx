@@ -1041,9 +1041,21 @@ export default function App() {
                 >
                   <div className="relative h-36 w-36 overflow-hidden rounded-2xl border-2 border-transparent bg-neutral-900 transition-all duration-200 group-hover:scale-105 group-hover:border-white sm:h-44 sm:w-44">
                     <img
-                      src={member.avatarUrl}
+                      src={
+                        member.role === 'elderly'
+                          ? 'https://raw.githubusercontent.com/yashkoparde/ojas/main/src/assets/images/patient.jpg'
+                          : member.role === 'caretaker'
+                          ? 'https://raw.githubusercontent.com/yashkoparde/ojas/main/src/assets/images/caregiver.jpg'
+                          : 'https://raw.githubusercontent.com/yashkoparde/ojas/main/src/assets/images/familymember.jpg'
+                      }
                       alt={member.name}
                       className="h-full w-full object-cover"
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        if (member.role === 'elderly') target.src = '/patient.jpg';
+                        else if (member.role === 'caretaker') target.src = '/caregiver.jpg';
+                        else if (member.role === 'family') target.src = '/familymember.jpg';
+                      }}
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
 
@@ -1443,9 +1455,12 @@ export default function App() {
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div className="flex items-center gap-4">
                     <img
-                      src={db.patient.avatarUrl}
+                      src={db.patient.avatarUrl || 'https://raw.githubusercontent.com/yashkoparde/ojas/main/src/assets/images/patient.jpg'}
                       alt={db.patient.fullName}
                       className="h-16 w-16 rounded-2xl border border-slate-200 object-cover"
+                      onError={(e) => {
+                        e.currentTarget.src = '/patient.jpg';
+                      }}
                     />
                     <div>
                       <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
@@ -1556,6 +1571,12 @@ export default function App() {
                           src={member.avatarUrl}
                           alt={member.name}
                           className="h-10 w-10 shrink-0 rounded-lg object-cover border border-emerald-300 dark:border-emerald-700"
+                          onError={(e) => {
+                            const target = e.currentTarget;
+                            if (member.role === 'elderly') target.src = '/patient.jpg';
+                            else if (member.role === 'caretaker') target.src = '/caregiver.jpg';
+                            else if (member.role === 'family') target.src = '/familymember.jpg';
+                          }}
                         />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 text-xs font-extrabold text-emerald-950 dark:text-emerald-200">
