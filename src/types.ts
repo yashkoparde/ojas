@@ -148,7 +148,7 @@ export interface NotificationSettings {
 export interface EmailNotificationLog {
   id: string;
   timestamp: string;
-  type: 'upcoming_dose' | 'missed_dose' | 'escalation_alert' | 'appointment_reminder' | 'refill_alert' | 'sos_emergency';
+  type: 'upcoming_dose' | 'missed_dose' | 'escalation_alert' | 'appointment_reminder' | 'refill_alert' | 'sos_emergency' | 'routine_reminder';
   subject: string;
   recipients: string[];
   body: string;

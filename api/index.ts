@@ -185,6 +185,24 @@ export default async function handler(req: any, res: any) {
       if (status === 'taken') {
         slot.acknowledgedAt = new Date().toISOString();
         slot.acknowledgedBy = sanitizeString(actorName) || 'User';
+        if (med.stockCount > 0) {
+          med.stockCount -= 1;
+        }
+      } else if (status === 'missed') {
+        // Proactive email escalation for missed medication
+        const recipients = memoryDb.notificationSettings?.recipientEmails || ['rohan.deshmukh@ojas.in', 'priya.nair.rn@ojas.in'];
+        const missedLog = {
+          id: `email-missed-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          type: 'escalation_alert',
+          subject: `[PROACTIVE ESCALATION] Missed Dose: ${med.name} (${med.dosage}) at ${slot.scheduledTime}`,
+          recipients,
+          body: `Automated Care Circle Alert: ${memoryDb.patient?.fullName || 'Patient'} missed the scheduled ${slot.scheduledTime} dose of ${med.name} (${med.dosage}). Caregiver follow-up required.`,
+          deliveryStatus: 'delivered',
+          acknowledged: false,
+        };
+        memoryDb.emailLogs = memoryDb.emailLogs || [];
+        memoryDb.emailLogs.unshift(missedLog);
       }
       if (notes !== undefined) {
         slot.notes = sanitizeString(notes);
@@ -702,6 +720,37 @@ User Request: ${userMessage || 'Analyze prescription image.'}`;
       adherenceRate,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // Route: POST /api/notifications/dispatch-reminder
+  if (method === 'POST' && path === '/api/notifications/dispatch-reminder') {
+    const { type, subject, body: reminderBody, recipients } = body;
+    const recipientList = recipients || memoryDb.notificationSettings?.recipientEmails || ['rohan.deshmukh@ojas.in', 'priya.nair.rn@ojas.in'];
+    const emailEntry = {
+      id: `email-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      type: type || 'upcoming_dose',
+      subject: sanitizeString(subject) || `[OJAS PROACTIVE REMINDER] Healthcare Routine for ${memoryDb.patient?.fullName}`,
+      recipients: recipientList,
+      body: sanitizeString(reminderBody) || 'Proactive health routine reminder.',
+      deliveryStatus: 'delivered',
+      acknowledged: false,
+    };
+    memoryDb.emailLogs = memoryDb.emailLogs || [];
+    memoryDb.emailLogs.unshift(emailEntry);
+
+    return sendJson(res, 200, { success: true, email: emailEntry, memoryDb });
+  }
+
+  // Route: POST /api/notifications/:id/ack
+  if (method === 'POST' && path.match(/^\/api\/notifications\/[^/]+\/(ack|acknowledge)$/)) {
+    const parts = path.split('/');
+    const id = parts[3];
+    const email = memoryDb.emailLogs?.find((e: any) => e.id === id);
+    if (email) {
+      email.acknowledged = true;
+    }
+    return sendJson(res, 200, { success: true, memoryDb });
   }
 
   // Route: POST /api/notifications/whatsapp-dispatch

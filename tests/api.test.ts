@@ -200,4 +200,46 @@ describe('OJAS Serverless API Integration Suite', () => {
     const json = JSON.parse(res.data);
     expect(json.success).toBe(true);
   });
+
+  it('POST /api/notifications/dispatch-reminder sends proactive email for upcoming dose and appointments', async () => {
+    const req = {
+      method: 'POST',
+      url: '/api/notifications/dispatch-reminder',
+      body: {
+        type: 'upcoming_dose',
+        subject: '[OJAS] Upcoming Telma 40 Dose Due in 15 Minutes',
+        body: 'Please ensure Kamala Aaji takes Telma 40 with warm water.',
+        recipients: ['rohan.deshmukh@ojas.in', 'priya.nair.rn@ojas.in'],
+      },
+    };
+    const res = new MockResponse();
+    await handler(req as any, res as any);
+
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.data);
+    expect(json.success).toBe(true);
+    expect(json.email.type).toBe('upcoming_dose');
+    expect(json.email.recipients).toContain('rohan.deshmukh@ojas.in');
+  });
+
+  it('marking dose as missed automatically logs proactive escalation email alert', async () => {
+    const req = {
+      method: 'POST',
+      url: '/api/medications/med-1/dose',
+      body: {
+        slotId: 'slot-med1-1',
+        status: 'missed',
+        actorName: 'System Scheduler',
+      },
+    };
+    const res = new MockResponse();
+    await handler(req as any, res as any);
+
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.data);
+    const hasEscalation = json.emailLogs.some(
+      (e: any) => e.type === 'escalation_alert' && e.subject.includes('Missed Dose')
+    );
+    expect(hasEscalation).toBe(true);
+  });
 });
