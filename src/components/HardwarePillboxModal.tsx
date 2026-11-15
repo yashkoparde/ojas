@@ -67,7 +67,7 @@ export const HardwarePillboxPanel: React.FC<HardwarePillboxPanelProps> = ({
           );
         }
       } else if (action === 'physical_button_confirm') {
-        onSpeakText(`Dhanyawad ${actorName}. Physical pillbox intake confirmed and synced to CareBridge India.`);
+        onSpeakText(`Dhanyawad ${actorName}. Physical pillbox intake confirmed and synced to OJAS India.`);
       }
     } finally {
       setBusy(false);

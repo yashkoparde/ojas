@@ -22,7 +22,7 @@ export const WhatsAppDispatchModal: React.FC<WhatsAppDispatchModalProps> = ({
   const [targetPhone, setTargetPhone] = useState<string>('+91 98201 99882 (Son: Rohan Deshmukh)');
   const [templateType, setTemplateType] = useState<'routine_vitals' | 'dose_reminder' | 'sos' | 'refill_order'>('routine_vitals');
   const [messageText, setMessageText] = useState<string>(
-    `[CAREBRIDGE UPDATE] Smt. Kamala Deshmukh: Morning clinical checkup completed by Sister Priya Sharma, RN. Blood Pressure: 126/78 mmHg, Glucose: 112 mg/dL. Morning medicines confirmed taken.`
+    `[OJAS UPDATE] Smt. Kamala Deshmukh: Morning clinical checkup completed by Sister Priya Sharma, RN. Blood Pressure: 126/78 mmHg, Glucose: 112 mg/dL. Morning medicines confirmed taken.`
   );
   const [sending, setSending] = useState<boolean>(false);
 
@@ -32,19 +32,19 @@ export const WhatsAppDispatchModal: React.FC<WhatsAppDispatchModalProps> = ({
     setTemplateType(type);
     if (type === 'routine_vitals') {
       setMessageText(
-        `[CAREBRIDGE UPDATE] ${patient.fullName}: Morning clinical checkup completed by ${currentMember.name}. Blood Pressure: 126/78 mmHg (Normal), Pulse: 72 bpm, SpO2: 98%. All morning doses confirmed taken.`
+        `[OJAS UPDATE] ${patient.fullName}: Morning clinical checkup completed by ${currentMember.name}. Blood Pressure: 126/78 mmHg (Normal), Pulse: 72 bpm, SpO2: 98%. All morning doses confirmed taken.`
       );
     } else if (type === 'dose_reminder') {
       setMessageText(
-        `[CAREBRIDGE DOSE ALERT] ${patient.fullName}: Upcoming afternoon dose for Eliquis 2.5mg (Compartment #3) scheduled at 14:00. Please ensure water is kept beside the pillbox.`
+        `[OJAS DOSE ALERT] ${patient.fullName}: Upcoming afternoon dose for Eliquis 2.5mg (Compartment #3) scheduled at 14:00. Please ensure water is kept beside the pillbox.`
       );
     } else if (type === 'sos') {
       setMessageText(
-        `[CAREBRIDGE URGENT SOS] ${patient.fullName}: Emergency assistance request triggered at ${new Date().toLocaleTimeString('en-IN')}. Caregiver on site. Please call patient or primary doctor immediately.`
+        `[OJAS URGENT SOS] ${patient.fullName}: Emergency assistance request triggered at ${new Date().toLocaleTimeString('en-IN')}. Caregiver on site. Please call patient or primary doctor immediately.`
       );
     } else if (type === 'refill_order') {
       setMessageText(
-        `[PHARMACY REFILL REQUEST] CareBridge ElderCare Order for ${patient.fullName}: Low stock alert on Atorva 20mg (4 tablets left). Delivery to Flat 402, Prabhat Road, Pune 411004. Prescribed by Dr. Rajesh Kulkarni.`
+        `[PHARMACY REFILL REQUEST] OJAS ElderCare Order for ${patient.fullName}: Low stock alert on Atorva 20mg (4 tablets left). Delivery to Flat 402, Prabhat Road, Pune 411004. Prescribed by Dr. Rajesh Kulkarni.`
       );
     }
   };

@@ -1,5 +1,5 @@
 {
-  "name": "CareBridge ElderCare Platform",
+  "name": "OJAS ElderCare Platform",
   "description": "Collaborative healthcare, medication adherence, appointment scheduling, AI clinical assistant, and smart pillbox platform for elderly patients, caretakers, and family members.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

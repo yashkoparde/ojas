@@ -261,7 +261,7 @@ export const DoctorReportShareModal: React.FC<DoctorReportShareModalProps> = ({
         {/* Footer Actions */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4 dark:border-slate-800 dark:bg-slate-800/50">
           <div className="text-xs text-slate-500">
-            Transmitted via CareBridge Verified Clinical Relay
+            Transmitted via OJAS Verified Clinical Relay
           </div>
 
           <div className="flex items-center gap-2">

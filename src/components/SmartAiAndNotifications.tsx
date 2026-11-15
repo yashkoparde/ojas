@@ -487,7 +487,7 @@ export const SmartAiAndNotifications: React.FC<SmartAiAndNotificationsProps> = (
                   onSendManualNotification({
                     type: 'upcoming_dose',
                     subject:
-                      '[TEST DISPATCH] Automated CareBridge India Medication & Escalation Verification',
+                      '[TEST DISPATCH] Automated OJAS India Medication & Escalation Verification',
                     body: `Triggered by ${currentMember.name}: All email reminder & missed-dose escalation channels for Smt. Kamala Deshmukh are active.`,
                   })
                 }

@@ -119,7 +119,7 @@ export const ProfileAndAccessManager: React.FC<ProfileAndAccessManagerProps> = (
       category: reportCategory,
       doctorName: reportDoctor,
       uploadedBy: currentMember.name,
-      notes: reportNotes || 'Uploaded to encrypted CareBridge India vault.',
+      notes: reportNotes || 'Uploaded to encrypted OJAS India vault.',
       fileDataUrl: reportDataUrl,
     });
     setReportTitle('');

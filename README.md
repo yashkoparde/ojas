@@ -11,7 +11,7 @@
 
 ## Executive Summary
 
-CareBridge (OJAS) is an intelligent, interconnected healthcare platform designed to solve the critical challenges of medication non-adherence, clinical isolation, and fragmented routine monitoring among elderly individuals. By bridging the physical-digital divide through an Internet of Things (IoT) Smart Pillbox, Google Gemini AI clinical reasoning, and a sovereign multi-persona collaborative framework, CareBridge transforms routine eldercare into a proactive, accessible, and dignified experience.
+OJAS is an intelligent, interconnected healthcare platform designed to solve the critical challenges of medication non-adherence, clinical isolation, and fragmented routine monitoring among elderly individuals. By bridging the physical-digital divide through an Internet of Things (IoT) Smart Pillbox, Google Gemini AI clinical reasoning, and a sovereign multi-persona collaborative framework, OJAS transforms routine eldercare into a proactive, accessible, and dignified experience.
 
 ---
 
@@ -35,7 +35,7 @@ Elderly individuals managing multiple chronic conditions (polypharmacy) face sev
 
 ## 2. System Architecture
 
-CareBridge is built on a modern full-stack architecture combining a Vite-powered React 19 single-page client, an Express server with Server-Sent Events (SSE) for real-time telemetry streaming, and server-side Google Gemini 2.5 Flash API integration.
+OJAS is built on a modern full-stack architecture combining a Vite-powered React 19 single-page client, an Express server with Server-Sent Events (SSE) for real-time telemetry streaming, and server-side Google Gemini 2.5 Flash API integration.
 
 ```mermaid
 flowchart TD
@@ -90,7 +90,7 @@ flowchart TD
 
 ## 3. Multi-Persona Sovereignty & Access Control (RBAC)
 
-CareBridge avoids the common pitfall of infantalizing the elderly by establishing strict patient sovereignty. The elderly patient owns the master health identity. Caregivers and remote family members can only access data and perform authorized clinical actions through validated 4-digit PIN authentication.
+OJAS avoids the common pitfall of infantalizing the elderly by establishing strict patient sovereignty. The elderly patient owns the master health identity. Caregivers and remote family members can only access data and perform authorized clinical actions through validated 4-digit PIN authentication.
 
 ```mermaid
 classDiagram
@@ -187,25 +187,25 @@ stateDiagram-v2
 
 ## 5. Proactive Notification, Escalation & Doctor Relay
 
-A missed dose triggers an automated multi-tier escalation flow. CareBridge also allows on-site caregivers to transmit structured clinical summaries directly to the primary doctor's office.
+A missed dose triggers an automated multi-tier escalation flow. OJAS also allows on-site caregivers to transmit structured clinical summaries directly to the primary doctor's office.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Elderly as Elderly Patient
-    participant Box as IoT Smart Pillbox
-    participant Server as CareBridge Server (SSE)
+    participant Pillbox as IoT Smart Pillbox
+    participant Server as OJAS Server (SSE)
     actor Nurse as Caregiver Nurse
     actor Family as Remote Family
     participant Doctor as Primary Doctor's Office
 
-    Note over Box,Server: Scheduled Time 08:00 Reached
-    Server->>Box: POST /api/hardware/sync (Light Slot #1, Start Buzzer)
-    Box-->>Elderly: Audible Beep + LED Ring Light
+    Note over Pillbox,Server: Scheduled Time 08:00 Reached
+    Server->>Pillbox: POST /api/hardware/sync (Light Slot #1, Start Buzzer)
+    Pillbox-->>Elderly: Audible Beep + LED Ring Light
     
     alt Elderly Confirms Dose
-        Elderly->>Box: Press Physical Button / Tap App
-        Box->>Server: POST /api/medications/:id/dose (taken)
+        Elderly->>Pillbox: Press Physical Button / Tap App
+        Pillbox->>Server: POST /api/medications/:id/dose (taken)
         Server->>Server: Decrement Stock, Stop Buzzer
         Server-->>Elderly: Speech TTS Confirmation + Green Check Overlay
         Server-->>Nurse: SSE Event Broadcast (Dose Verified)
@@ -310,7 +310,7 @@ erDiagram
 
 ## 8. Expected Impact & Outcomes
 
-| Dimension | Traditional ElderCare | CareBridge (OJAS) Impact |
+| Dimension | Traditional ElderCare | OJAS Impact |
 | :--- | :--- | :--- |
 | **Medication Adherence** | 50% - 65% average geriatric adherence | Targeted 95%+ adherence via multi-modal sensory cues and physical pillbox sync |
 | **Emergency Hospitalizations** | High incidence due to drug contraindications and missed hypertensive doses | Preventative detection via Gemini AI and proactive escalation loops |
